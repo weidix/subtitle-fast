@@ -1,7 +1,6 @@
-use std::env;
-
 #[cfg(target_os = "macos")]
 fn build_vision_bridge() {
+    use std::env;
     if env::var("CARGO_FEATURE_ENGINE_VISION").is_err() {
         return;
     }

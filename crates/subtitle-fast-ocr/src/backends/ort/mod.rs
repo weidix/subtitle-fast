@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use ndarray::{Array4, ArrayD, ArrayView2, Axis};
-use ort::session::{builder::GraphOptimizationLevel, Session};
+use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::Tensor;
 
 use crate::{OcrEngine, OcrError, OcrRegion, OcrRequest, OcrResponse, OcrText};
@@ -242,9 +242,8 @@ fn prepare_input_tensor(
         }
     }
 
-    Array4::from_shape_vec((1, 3, target_height, target_width), chw).map_err(|err| {
-        OcrError::backend(format!("failed to build OCR input tensor shape: {err}"))
-    })
+    Array4::from_shape_vec((1, 3, target_height, target_width), chw)
+        .map_err(|err| OcrError::backend(format!("failed to build OCR input tensor shape: {err}")))
 }
 
 fn resize_bilinear(
@@ -290,7 +289,10 @@ fn resize_bilinear(
 
 fn load_dictionary(path: &Path) -> Result<Vec<String>, OcrError> {
     let contents = fs::read_to_string(path).map_err(|err| {
-        OcrError::backend(format!("failed to read OCR dictionary {}: {err}", path.display()))
+        OcrError::backend(format!(
+            "failed to read OCR dictionary {}: {err}",
+            path.display()
+        ))
     })?;
     let mut dictionary = Vec::new();
     for line in contents.lines() {

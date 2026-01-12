@@ -5,10 +5,10 @@ use std::time::Instant;
 use indicatif::{ProgressBar, ProgressStyle};
 use subtitle_fast_ocr::{LumaPlane, NoopOcrEngine, OcrEngine, OcrRegion, OcrRequest};
 
-#[cfg(all(feature = "engine-vision", target_os = "macos"))]
-use subtitle_fast_ocr::VisionOcrEngine;
 #[cfg(feature = "engine-ort")]
 use subtitle_fast_ocr::OrtOcrEngine;
+#[cfg(all(feature = "engine-vision", target_os = "macos"))]
+use subtitle_fast_ocr::VisionOcrEngine;
 
 const INPUT_IMAGE: &str = "./demo/rand_cn2.png";
 const ITERATIONS: u64 = 100;
@@ -61,15 +61,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             .as_deref()
             .map(|text| format!(" text='{text}'"))
             .unwrap_or_default();
-        println!("  {:>12}: avg={avg_ms:.3}ms/{ITERATIONS} calls{suffix}", backend);
+        println!(
+            "  {:>12}: avg={avg_ms:.3}ms/{ITERATIONS} calls{suffix}",
+            backend
+        );
     }
 
     Ok(())
 }
 
 fn available_backends() -> Vec<&'static str> {
-    let mut backends = Vec::new();
-    backends.push("noop");
+    let mut backends = vec!["noop"];
     #[cfg(feature = "engine-ort")]
     backends.push("ort");
     #[cfg(all(feature = "engine-vision", target_os = "macos"))]
@@ -119,7 +121,7 @@ fn build_engine(name: &str) -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
     match normalized.as_str() {
         "ort" => build_ort_engine(),
         "vision" => build_vision_engine(),
-        "noop" => Ok(Box::new(NoopOcrEngine::default())),
+        "noop" => Ok(Box::new(NoopOcrEngine)),
         other => Err(format!("unknown OCR backend '{other}'").into()),
     }
 }

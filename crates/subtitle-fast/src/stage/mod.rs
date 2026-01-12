@@ -24,10 +24,10 @@ use ocr::{OcrStageError, SubtitleOcr};
 use sampler::FrameSampler;
 use sorter::FrameSorter;
 use subtitle_fast_decoder::DynDecoderProvider;
-#[cfg(all(feature = "ocr-vision", target_os = "macos"))]
-use subtitle_fast_ocr::VisionOcrEngine;
 #[cfg(feature = "ocr-ort")]
 use subtitle_fast_ocr::OrtOcrEngine;
+#[cfg(all(feature = "ocr-vision", target_os = "macos"))]
+use subtitle_fast_ocr::VisionOcrEngine;
 use subtitle_fast_ocr::{NoopOcrEngine, OcrEngine};
 use subtitle_fast_types::DecoderError;
 use subtitle_fast_validator::subtitle_detection::SubtitleDetectionError;

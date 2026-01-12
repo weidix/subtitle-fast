@@ -3,10 +3,10 @@ use std::path::PathBuf;
 
 use subtitle_fast_ocr::{LumaPlane, NoopOcrEngine, OcrEngine, OcrRegion, OcrRequest};
 
-#[cfg(all(feature = "engine-vision", target_os = "macos"))]
-use subtitle_fast_ocr::VisionOcrEngine;
 #[cfg(feature = "engine-ort")]
 use subtitle_fast_ocr::OrtOcrEngine;
+#[cfg(all(feature = "engine-vision", target_os = "macos"))]
+use subtitle_fast_ocr::VisionOcrEngine;
 
 const INPUT_IMAGE: &str = "./demo/rand_cn2.png";
 const OCR_BACKEND: &str = "ort"; // auto | ort | vision | noop
@@ -36,7 +36,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    println!("OCR results for {:?} (backend={}):", input_path, engine.name());
+    println!(
+        "OCR results for {:?} (backend={}):",
+        input_path,
+        engine.name()
+    );
     for entry in response.texts {
         let conf = entry
             .confidence
@@ -57,7 +61,7 @@ fn build_engine(name: &str) -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
         "auto" => build_auto_engine(),
         "ort" => build_ort_engine(),
         "vision" => build_vision_engine(),
-        "noop" => Ok(Box::new(NoopOcrEngine::default())),
+        "noop" => Ok(Box::new(NoopOcrEngine)),
         other => Err(format!("unknown OCR backend '{other}'").into()),
     }
 }
@@ -69,7 +73,7 @@ fn build_auto_engine() -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
     if let Ok(engine) = build_vision_engine() {
         return Ok(engine);
     }
-    Ok(Box::new(NoopOcrEngine::default()))
+    Ok(Box::new(NoopOcrEngine))
 }
 
 #[cfg(feature = "engine-ort")]

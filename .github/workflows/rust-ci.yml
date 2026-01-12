@@ -37,24 +37,43 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust fmt, clippy, and tests
+    name: Build, fmt, clippy, and tests
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: target/cargo
+      FFMPEG_VERSION: "8.0.1"
+      ORT_VERSION: "1.22.0"
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache cargo registry + git + target
+      - name: Cache cargo registry/git/target
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+            target/cargo
           key: rust-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: rust-${{ runner.os }}-cargo-
 
-      - name: Prepare apt cache dir
+      - name: Cache ONNX Runtime artifacts
+        id: cache-onnxruntime
+        uses: actions/cache@v4
+        with:
+          path: target/onnxruntime
+          key: rust-${{ runner.os }}-onnxruntime-${{ env.ORT_VERSION }}-${{ hashFiles('scripts/build-onnxruntime.sh', 'models/ch_PP-OCRv5_rec_infer.config') }}
+
+      - name: Cache FFmpeg artifacts
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/ffmpeg-min
+            target/ffmpeg-build
+          key: rust-${{ runner.os }}-ffmpeg-${{ env.FFMPEG_VERSION }}-${{ hashFiles('scripts/build-ffmpeg-min.sh') }}
+
+      - name: Prepare apt cache directory
         run: |
           sudo mkdir -p /var/cache/apt/archives
           sudo chown -R $USER:$USER /var/cache/apt/archives
@@ -70,8 +89,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            build-essential \
+            cmake \
+            git \
             nasm \
+            ninja-build \
+            patch \
             pkg-config \
+            python3 \
+            python3-pip \
             libxcb1-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
@@ -79,7 +105,7 @@ jobs:
             libfreetype6-dev \
             libssl-dev
 
-      - name: Prepare apt cache for saving
+      - name: Finalize apt cache ownership
         run: sudo chown -R $USER:$USER /var/cache/apt/archives
 
       - name: Install Rust
@@ -88,13 +114,18 @@ jobs:
           toolchain: 1.92.0
           components: rustfmt, clippy
 
+      - name: Build ONNX Runtime (MinSizeRel)
+        if: steps.cache-onnxruntime.outputs.cache-hit != 'true'
+        run: ./scripts/build-onnxruntime.sh --ops-config models/ch_PP-OCRv5_rec_infer.config
+
       - name: Build trimmed FFmpeg bundle
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: ./scripts/build-ffmpeg-min.sh
 
-      - name: Build with static FFmpeg (debug)
+      - name: Build subtitle-fast (debug)
         run: cargo build -p subtitle-fast
 
-      - name: Format check
+      - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Clippy

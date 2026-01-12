@@ -8,10 +8,11 @@ name = "subtitle-fast"
 path = "src/main.rs"
 
 [features]
-default = ["gui", "detector-vision", "ocr-vision"]
+default = ["gui", "detector-vision", "ocr-vision", "ocr-ort"]
 gui = ["dep:gpui", "dep:anyhow", "dep:rust-embed"]
 detector-vision = ["subtitle-fast-validator/detector-vision"]
 ocr-vision = ["subtitle-fast-ocr/engine-vision"]
+ocr-ort = ["subtitle-fast-ocr/engine-ort"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

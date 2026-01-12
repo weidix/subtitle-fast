@@ -41,7 +41,7 @@ These diagnostics are invaluable when tuning detection thresholds or validating 
 
 - Decoder backends are toggled through features on `subtitle-fast-decoder` (`backend-ffmpeg`, `backend-videotoolbox`,
   `backend-dxva`, `backend-mft`, or the always-available mock backend).
-- OCR support depends on the target: macOS builds can enable Apple Vision (`ocr-vision`).
+- OCR support depends on the target: macOS builds can enable Apple Vision (`ocr-vision`), and all platforms can use ONNX Runtime + PP-OCRv5 (`ocr-ort`).
 - Debug helpers are available on all platforms and require no extra features.
 
 ## Running the binary

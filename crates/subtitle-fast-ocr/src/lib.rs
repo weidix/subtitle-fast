@@ -6,6 +6,8 @@ mod region;
 mod request;
 mod response;
 
+#[cfg(feature = "engine-ort")]
+pub use backends::ort::{OrtOcrConfig, OrtOcrEngine};
 #[cfg(all(feature = "engine-vision", target_os = "macos"))]
 pub use backends::vision::{VisionOcrConfig, VisionOcrEngine};
 pub use engine::{NoopOcrEngine, OcrEngine};

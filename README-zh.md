@@ -21,7 +21,7 @@ cargo run --release --no-default-features \
 ## 后端与特性
 
 - 解码：`backend-ffmpeg`（通用）、`backend-videotoolbox`（macOS 硬解）、`backend-dxva`（Windows D3D11/DXVA 硬解）、`backend-mft`（Windows 回退）、`mock`（始终可用，`--backend mock`）。
-- OCR：`ocr-vision` 启用 Apple Vision（macOS）；未启用时可用 noop 引擎做流水线/性能测试。
+- OCR：`ocr-vision` 启用 Apple Vision（macOS）；`ocr-ort` 启用 ONNX Runtime + PP-OCRv5（全平台）；未启用时可用 noop 引擎做流水线/性能测试。
 - 检测：`detector-vision`（macOS）。非 macOS 时关闭该特性。
 
 CLI 会按优先级选择首个已编译的解码后端（CI 先 mock；macOS 先 VideoToolbox 后 FFmpeg；Windows 先 DXVA 再 MFT 再 FFmpeg；其他平台 FFmpeg），失败则自动回退，并在下游变慢时保持背压。

@@ -5,12 +5,22 @@ edition = "2024"
 build = "build.rs"
 
 [features]
-default = ["engine-vision"]
+default = ["engine-vision", "engine-ort"]
 engine-vision = []
+engine-ort = ["dep:ndarray", "dep:ort"]
 
 [dependencies]
 subtitle-fast-types = { path = "../subtitle-fast-types" }
 thiserror = "2"
+ndarray = { version = "0.16", default-features = false, features = ["std"], optional = true }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = [
+    "ndarray",
+    "std",
+], optional = true }
 
 [build-dependencies]
 cc = "1"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+indicatif = "0.17"

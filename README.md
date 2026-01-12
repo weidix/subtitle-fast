@@ -35,6 +35,7 @@ The CLI picks the first compiled backend in priority order (mock on CI; VideoToo
 
 **OCR**
 - `ocr-vision` enables Apple Vision on macOS (`--ocr-backend vision` or `auto` when available).
+- `ocr-ort` enables ONNX Runtime + PP-OCRv5 recognition across platforms (requires the PP-OCR model assets).
 - Without Vision, the noop OCR engine keeps the pipeline running for benchmarking (`--ocr-backend noop`).
 
 **Detection helpers**

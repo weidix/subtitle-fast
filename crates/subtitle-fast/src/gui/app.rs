@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::gui::components::{
-    CollapseDirection, ColorPicker, DetectedSubtitlesList, DetectionControls, DetectionHandle,
-    DetectionMetrics, DetectionSidebar, DetectionSidebarHost, DragRange, DraggableEdge,
-    FramePreprocessor, Nv12FrameInfo, Sidebar, SidebarHandle, TaskSidebar, TaskSidebarCallbacks,
-    Titlebar, VideoControls, VideoLumaControls, VideoLumaHandle, VideoPlayer,
+    CollapseDirection, ColorPicker, ConfirmDialog, ConfirmDialogButton, ConfirmDialogButtonStyle,
+    ConfirmDialogConfig, ConfirmDialogTitle, DetectedSubtitlesList, DetectionControls,
+    DetectionHandle, DetectionMetrics, DetectionSidebar, DetectionSidebarHost, DragRange,
+    DraggableEdge, FramePreprocessor, Nv12FrameInfo, Sidebar, SidebarHandle, TaskSidebar,
+    TaskSidebarCallbacks, Titlebar, VideoControls, VideoLumaControls, VideoLumaHandle, VideoPlayer,
     VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay, VideoToolbar,
 };
 use crate::gui::icons::{Icon, icon_md, icon_sm};
@@ -78,6 +79,7 @@ impl SubtitleFastApp {
                             TaskSidebarCallbacks {
                                 on_add: Arc::new(|_, _| {}),
                                 on_select: Arc::new(|_, _, _| {}),
+                                on_cancel: Arc::new(|_, _, _| {}),
                                 on_remove: Arc::new(|_, _, _| {}),
                             },
                         )
@@ -115,6 +117,7 @@ impl SubtitleFastApp {
                     let (color_picker, color_picker_handle) = ColorPicker::new();
                     let color_picker_view = cx.new(|_| color_picker);
                     let toolbar_view = cx.new(|_| VideoToolbar::new());
+                    let confirm_dialog_view = cx.new(|_| ConfirmDialog::new());
                     let (roi_overlay, roi_handle) = VideoRoiOverlay::new();
                     let roi_overlay_view = cx.new(|_| roi_overlay);
                     let _ = toolbar_view.update(cx, |toolbar_view, cx| {
@@ -155,11 +158,13 @@ impl SubtitleFastApp {
                             controls_view,
                             roi_overlay_view,
                             roi_handle,
+                            confirm_dialog_view.clone(),
                         )
                     });
                     let weak_main = main_window.downgrade();
                     let add_handle = weak_main.clone();
                     let select_handle = weak_main.clone();
+                    let cancel_handle = weak_main.clone();
                     let remove_handle = weak_main.clone();
                     let _ = task_sidebar_view.update(cx, |sidebar, cx| {
                         sidebar.set_callbacks(
@@ -180,12 +185,20 @@ impl SubtitleFastApp {
                                         this.activate_session(session_id, cx);
                                     });
                                 }),
+                                on_cancel: Arc::new(move |session_id, _window, cx| {
+                                    let Some(main_window) = cancel_handle.upgrade() else {
+                                        return;
+                                    };
+                                    let _ = main_window.update(cx, |this, cx| {
+                                        this.request_cancel_session(session_id, cx);
+                                    });
+                                }),
                                 on_remove: Arc::new(move |session_id, _window, cx| {
                                     let Some(main_window) = remove_handle.upgrade() else {
                                         return;
                                     };
                                     let _ = main_window.update(cx, |this, cx| {
-                                        this.remove_session(session_id, cx);
+                                        this.request_remove_session(session_id, cx);
                                     });
                                 }),
                             },
@@ -254,6 +267,7 @@ pub struct MainWindow {
     controls_view: Entity<VideoControls>,
     roi_overlay: Entity<VideoRoiOverlay>,
     roi_handle: VideoRoiHandle,
+    confirm_dialog: Entity<ConfirmDialog>,
 }
 
 impl MainWindow {
@@ -272,6 +286,7 @@ impl MainWindow {
         controls_view: Entity<VideoControls>,
         roi_overlay: Entity<VideoRoiOverlay>,
         roi_handle: VideoRoiHandle,
+        confirm_dialog: Entity<ConfirmDialog>,
     ) -> Self {
         Self {
             player,
@@ -294,6 +309,7 @@ impl MainWindow {
             controls_view,
             roi_overlay,
             roi_handle,
+            confirm_dialog,
         }
     }
 
@@ -411,6 +427,126 @@ impl MainWindow {
         }
         self.sessions.remove_session(session_id);
         self.notify_task_sidebar(cx);
+    }
+
+    fn open_confirm_dialog(&mut self, config: ConfirmDialogConfig, cx: &mut Context<Self>) {
+        let dialog = self.confirm_dialog.clone();
+        let _ = dialog.update(cx, |dialog, cx| {
+            dialog.open(config, cx);
+        });
+    }
+
+    fn request_cancel_session(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+        let Some(session) = self.sessions.session(session_id) else {
+            return;
+        };
+
+        let label = session.label.clone();
+        let title_text: SharedString = format!("Stop \"{label}\"?").into();
+        let message: SharedString =
+            format!("Stop processing \"{label}\"? You can restart this task later.").into();
+        let main_handle = cx.entity().downgrade();
+
+        let title = ConfirmDialogTitle::element(move || {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(icon_sm(Icon::Stop, hsla(0.0, 0.0, 0.85, 1.0)))
+                .child(title_text.clone())
+                .into_any_element()
+        });
+
+        let cancel_button = ConfirmDialogButton::new(
+            "Keep Running",
+            ConfirmDialogButtonStyle::Secondary,
+            true,
+            Arc::new(|_, _| {}),
+        );
+        let confirm_button = ConfirmDialogButton::new(
+            "Stop",
+            ConfirmDialogButtonStyle::Danger,
+            true,
+            Arc::new(move |_window, cx| {
+                if let Some(main_window) = main_handle.upgrade() {
+                    let _ = main_window.update(cx, |this, cx| {
+                        this.cancel_session(session_id, cx);
+                    });
+                }
+            }),
+        );
+
+        self.open_confirm_dialog(
+            ConfirmDialogConfig {
+                title,
+                message,
+                buttons: vec![cancel_button, confirm_button],
+                show_backdrop: true,
+                backdrop_color: hsla(0.0, 0.0, 0.0, 0.55),
+                close_on_outside: true,
+            },
+            cx,
+        );
+    }
+
+    fn cancel_session(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+        if let Some(session) = self.sessions.session(session_id) {
+            session.detection.cancel();
+        }
+        self.notify_task_sidebar(cx);
+    }
+
+    fn request_remove_session(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+        let Some(session) = self.sessions.session(session_id) else {
+            return;
+        };
+
+        let label = session.label.clone();
+        let title_text: SharedString = format!("Remove \"{label}\"?").into();
+        let message: SharedString =
+            format!("Remove \"{label}\" from the task list? This will discard its results.").into();
+        let main_handle = cx.entity().downgrade();
+
+        let title = ConfirmDialogTitle::element(move || {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(icon_sm(Icon::Trash, hsla(0.0, 0.0, 0.85, 1.0)))
+                .child(title_text.clone())
+                .into_any_element()
+        });
+
+        let cancel_button = ConfirmDialogButton::new(
+            "Keep Task",
+            ConfirmDialogButtonStyle::Secondary,
+            true,
+            Arc::new(|_, _| {}),
+        );
+        let confirm_button = ConfirmDialogButton::new(
+            "Remove",
+            ConfirmDialogButtonStyle::Danger,
+            true,
+            Arc::new(move |_window, cx| {
+                if let Some(main_window) = main_handle.upgrade() {
+                    let _ = main_window.update(cx, |this, cx| {
+                        this.remove_session(session_id, cx);
+                    });
+                }
+            }),
+        );
+
+        self.open_confirm_dialog(
+            ConfirmDialogConfig {
+                title,
+                message,
+                buttons: vec![cancel_button, confirm_button],
+                show_backdrop: true,
+                backdrop_color: hsla(0.0, 0.0, 0.0, 0.55),
+                close_on_outside: true,
+            },
+            cx,
+        );
     }
 
     fn save_active_session_state(&mut self, cx: &App) {
@@ -611,6 +747,7 @@ impl Render for MainWindow {
         self.set_replay_visible(ended && !self.replay_dismissed, cx);
 
         div()
+            .relative()
             .flex()
             .flex_col()
             .w_full()
@@ -785,6 +922,7 @@ impl Render for MainWindow {
                     .child(video_area)
                     .child(self.right_panel.clone())
             })
+            .child(self.confirm_dialog.clone())
     }
 }
 

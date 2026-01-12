@@ -26,6 +26,7 @@ const PROGRESS_THROTTLE: Duration = Duration::from_millis(500);
 pub struct TaskSidebarCallbacks {
     pub on_add: Arc<dyn Fn(&mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
     pub on_select: Arc<dyn Fn(SessionId, &mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
+    pub on_cancel: Arc<dyn Fn(SessionId, &mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
     pub on_remove: Arc<dyn Fn(SessionId, &mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
 }
 
@@ -207,7 +208,13 @@ impl TaskSidebar {
         ratio.clamp(0.0, 1.0) as f32
     }
 
-    fn apply_action(&mut self, session_id: SessionId, action: TaskAction, _cx: &mut Context<Self>) {
+    fn apply_action(
+        &mut self,
+        session_id: SessionId,
+        action: TaskAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self.sessions.session(session_id) else {
             return;
         };
@@ -219,7 +226,7 @@ impl TaskSidebar {
                 session.detection.toggle_pause();
             }
             TaskAction::Cancel => {
-                session.detection.cancel();
+                (self.callbacks.on_cancel)(session_id, window, cx);
             }
         }
     }
@@ -357,8 +364,8 @@ impl Render for TaskSidebar {
                             .hover(move |s| s.bg(hover_bg).text_color(hover_color))
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(move |this, _, _, cx| {
-                                    this.apply_action(session_id, action, cx);
+                                cx.listener(move |this, _, window, cx| {
+                                    this.apply_action(session_id, action, window, cx);
                                 }),
                             )
                             .child(icon_sm(icon, btn_icon_color).w(px(12.0)).h(px(12.0)))

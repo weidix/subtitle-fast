@@ -1,4 +1,5 @@
 pub mod color_picker;
+pub mod confirm_dialog;
 pub mod detection_sidebar;
 pub mod sidebar;
 pub mod task_sidebar;
@@ -10,6 +11,10 @@ pub mod video_roi_overlay;
 pub mod video_toolbar;
 
 pub use color_picker::{ColorPicker, ColorPickerHandle};
+pub use confirm_dialog::{
+    ConfirmDialog, ConfirmDialogButton, ConfirmDialogButtonStyle, ConfirmDialogConfig,
+    ConfirmDialogTitle,
+};
 pub use detection_sidebar::{
     DetectedSubtitlesList, DetectionControls, DetectionHandle, DetectionMetrics, DetectionRunState,
     DetectionSidebar, DetectionSidebarHost,

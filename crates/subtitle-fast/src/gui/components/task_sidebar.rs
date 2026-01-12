@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,7 @@ use gpui::{
     Bounds, Context, FontWeight, InteractiveElement, MouseButton, Pixels, Render, Task, Window,
     div, hsla, px, relative, rgb,
 };
+use tokio::sync::oneshot;
 use tokio::time::MissedTickBehavior;
 
 use crate::gui::icons::{Icon, icon_md, icon_sm};
@@ -28,11 +29,37 @@ pub struct TaskSidebarCallbacks {
     pub on_remove: Arc<dyn Fn(SessionId, &mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
 }
 
+struct ProgressListener {
+    _ui_task: Task<()>,
+    stop_tx: Option<oneshot::Sender<()>>,
+}
+
+impl ProgressListener {
+    fn new(ui_task: Task<()>, stop_tx: oneshot::Sender<()>) -> Self {
+        Self {
+            _ui_task: ui_task,
+            stop_tx: Some(stop_tx),
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+    }
+}
+
+impl Drop for ProgressListener {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 pub struct TaskSidebar {
     sessions: SessionHandle,
     callbacks: TaskSidebarCallbacks,
     container_bounds: Option<Bounds<Pixels>>,
-    progress_tasks: HashMap<SessionId, Task<()>>,
+    progress_tasks: HashMap<SessionId, ProgressListener>,
 }
 
 impl TaskSidebar {
@@ -76,6 +103,7 @@ impl TaskSidebar {
             }
         });
 
+        let (stop_tx, mut stop_rx) = oneshot::channel();
         let tokio_task = runtime::spawn(async move {
             let mut progress_rx = handle.subscribe_progress();
             let mut state_rx = handle.subscribe_state();
@@ -91,6 +119,7 @@ impl TaskSidebar {
 
             loop {
                 tokio::select! {
+                    _ = &mut stop_rx => break,
                     changed = progress_rx.changed() => {
 
                         if changed.is_err() {
@@ -144,7 +173,14 @@ impl TaskSidebar {
         if tokio_task.is_none() {
             eprintln!("task sidebar listener failed: tokio runtime not initialized");
         }
-        self.progress_tasks.insert(session.id, task);
+        self.progress_tasks
+            .insert(session.id, ProgressListener::new(task, stop_tx));
+    }
+
+    fn prune_progress_listeners(&mut self, sessions: &[VideoSession]) {
+        let active_ids: HashSet<SessionId> = sessions.iter().map(|session| session.id).collect();
+        self.progress_tasks
+            .retain(|session_id, _| active_ids.contains(session_id));
     }
 
     fn progress_snapshot(&self, session: &VideoSession) -> PipelineProgress {
@@ -212,6 +248,7 @@ impl Render for TaskSidebar {
 
         let sessions = self.sessions.sessions_snapshot();
         let active_id = self.sessions.active_id();
+        self.prune_progress_listeners(&sessions);
         for session in &sessions {
             self.ensure_progress_listener(session, window, cx);
         }

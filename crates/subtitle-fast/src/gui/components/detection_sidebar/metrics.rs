@@ -4,6 +4,7 @@ use futures_channel::mpsc::unbounded;
 use futures_util::StreamExt;
 use gpui::prelude::*;
 use gpui::{Context, FontWeight, Hsla, Render, Task, Window, div, hsla, px, relative, rgb};
+use tokio::sync::oneshot;
 use tokio::time::MissedTickBehavior;
 
 use crate::gui::icons::{Icon, icon_sm};
@@ -18,6 +19,7 @@ const PROGRESS_STEP: f64 = 0.001;
 pub struct DetectionMetrics {
     progress: PipelineProgress,
     progress_task: Option<Task<()>>,
+    progress_stop: Option<oneshot::Sender<()>>,
     handle: DetectionHandle,
 }
 
@@ -27,6 +29,7 @@ impl DetectionMetrics {
         Self {
             progress,
             progress_task: None,
+            progress_stop: None,
             handle,
         }
     }
@@ -61,6 +64,7 @@ impl DetectionMetrics {
             }
         });
 
+        let (stop_tx, mut stop_rx) = oneshot::channel();
         let tokio_task = runtime::spawn(async move {
             let mut progress_rx = handle.subscribe_progress();
             let mut state_rx = handle.subscribe_state();
@@ -76,6 +80,7 @@ impl DetectionMetrics {
 
             loop {
                 tokio::select! {
+                    _ = &mut stop_rx => break,
                     changed = progress_rx.changed() => {
                         if changed.is_err() {
                             break;
@@ -125,6 +130,7 @@ impl DetectionMetrics {
             eprintln!("detection metrics listener failed: tokio runtime not initialized");
         }
         self.progress_task = Some(task);
+        self.progress_stop = Some(stop_tx);
     }
 
     fn progress_ratio(&self) -> f32 {
@@ -308,5 +314,13 @@ impl Render for DetectionMetrics {
             .gap(px(10.0))
             .child(progress_bar)
             .child(rows)
+    }
+}
+
+impl Drop for DetectionMetrics {
+    fn drop(&mut self) {
+        if let Some(stop_tx) = self.progress_stop.take() {
+            let _ = stop_tx.send(());
+        }
     }
 }

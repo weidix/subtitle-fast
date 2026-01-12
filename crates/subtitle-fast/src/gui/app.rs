@@ -401,6 +401,9 @@ impl MainWindow {
     }
 
     fn remove_session(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+        if let Some(session) = self.sessions.session(session_id) {
+            session.detection.cancel();
+        }
         if self.active_session == Some(session_id) {
             self.active_session = None;
             self.release_player(cx);
@@ -475,6 +478,9 @@ impl MainWindow {
     }
 
     fn release_player(&mut self, cx: &mut Context<Self>) {
+        if let Some(controls) = self.controls.as_ref() {
+            controls.shutdown();
+        }
         self.player = None;
         self.controls = None;
         self.video_info = None;

@@ -114,6 +114,10 @@ impl VideoPlayerControlHandle {
         let _ = self.sender.send(PlayerCommand::Replay);
     }
 
+    pub fn shutdown(&self) {
+        let _ = self.sender.send(PlayerCommand::Shutdown);
+    }
+
     pub fn set_preprocessor(&self, key: impl Into<String>, preprocessor: FramePreprocessor) {
         let _ = self.sender.send(PlayerCommand::SetPreprocessor {
             key: key.into(),
@@ -138,6 +142,7 @@ enum PlayerCommand {
     EndScrub,
     Seek(SeekInfo),
     Replay,
+    Shutdown,
     SetPreprocessor {
         key: String,
         preprocessor: FramePreprocessor,
@@ -443,6 +448,21 @@ fn handle_command(
     info: &VideoPlayerInfoHandle,
 ) -> bool {
     match command {
+        PlayerCommand::Shutdown => {
+            *input_path = None;
+            *paused = false;
+            *prime_first_frame = false;
+            *has_frame = false;
+            *scrubbing = false;
+            *pending_seek = None;
+            *pending_seek_frame = None;
+            *seek_timing = None;
+            *open_requested = false;
+            *open_start_frame = None;
+            preprocessors.clear();
+            *refresh_cached = false;
+            return false;
+        }
         PlayerCommand::Open(path, options) => {
             *input_path = Some(path);
             *paused = options.paused;

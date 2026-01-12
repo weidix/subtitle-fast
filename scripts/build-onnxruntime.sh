@@ -59,6 +59,13 @@ if [ ! -d "$SRC_DIR" ]; then
   tar -xzf "$ARCHIVE" -C "$OUT_DIR"
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 is required to install ONNX Runtime build dependencies" >&2
+  exit 1
+fi
+python3 -m pip install --upgrade pip
+python3 -m pip install -r "$SRC_DIR/requirements.txt"
+
 # Fix Eigen SHA1 hash mismatch in deps.txt
 DEPS_FILE="$SRC_DIR/cmake/deps.txt"
 if [ -f "$DEPS_FILE" ]; then

@@ -72,6 +72,17 @@ if (-not (Test-Path $SrcDir)) {
     & tar -xzf $Archive -C $OutDir
 }
 
+$PythonExe = if (Get-Command python3 -ErrorAction SilentlyContinue) {
+    "python3"
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    "python"
+} else {
+    throw "python is required to install ONNX Runtime build dependencies"
+}
+
+& $PythonExe -m pip install --upgrade pip
+& $PythonExe -m pip install -r (Join-Path $SrcDir "requirements.txt")
+
 # Fix Eigen SHA1 hash mismatch in deps.txt
 $DepsFile = Join-Path $SrcDir "cmake\deps.txt"
 if (Test-Path $DepsFile) {

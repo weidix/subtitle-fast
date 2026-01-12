@@ -10,3 +10,10 @@ ORT_LIB_LOCATION = { value = "target/onnxruntime/build/MinSizeRel", relative = t
 rustflags = [
   "-L", "target/onnxruntime/build/MinSizeRel/_deps/re2-build",
 ]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+  "-L", "target/onnxruntime/build/MinSizeRel/_deps/re2-build",
+  "-l", "advapi32",
+  "-l", "dxcore",
+]

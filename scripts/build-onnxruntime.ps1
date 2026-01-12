@@ -157,9 +157,7 @@ $Re2Lib = Join-Path $Re2BuildDir "re2.lib"
 
 if ((Test-Path $Re2BuildDir) -and -not (Test-Path $Re2Lib)) {
     Write-Host "Building re2 library..."
-    Push-Location $MinSizeRelDir
-    & cmake --build . --target re2 --config MinSizeRel
-    Pop-Location
+    & cmake --build $Re2BuildDir --config MinSizeRel
 }
 
 Pop-Location

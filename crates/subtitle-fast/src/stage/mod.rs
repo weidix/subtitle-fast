@@ -26,6 +26,8 @@ use sorter::FrameSorter;
 use subtitle_fast_decoder::DynDecoderProvider;
 #[cfg(all(feature = "ocr-vision", target_os = "macos"))]
 use subtitle_fast_ocr::VisionOcrEngine;
+#[cfg(feature = "ocr-ort")]
+use subtitle_fast_ocr::OrtOcrEngine;
 use subtitle_fast_ocr::{NoopOcrEngine, OcrEngine};
 use subtitle_fast_types::DecoderError;
 use subtitle_fast_validator::subtitle_detection::SubtitleDetectionError;
@@ -263,6 +265,15 @@ fn build_ocr_engine(_settings: &EffectiveSettings) -> Arc<dyn OcrEngine> {
             Ok(engine) => return Arc::new(engine),
             Err(err) => {
                 eprintln!("vision OCR engine failed to initialize: {err}");
+            }
+        }
+    }
+    #[cfg(feature = "ocr-ort")]
+    {
+        match OrtOcrEngine::new() {
+            Ok(engine) => return Arc::new(engine),
+            Err(err) => {
+                eprintln!("ort OCR engine failed to initialize: {err}");
             }
         }
     }

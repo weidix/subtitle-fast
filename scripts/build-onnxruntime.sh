@@ -107,6 +107,7 @@ BUILD_ARGS=(
   --disable_ml_ops
   --disable_rtti
   --build_dir "$LIB_DIR"
+  --cmake_extra_defines onnxruntime_BUILD_UNIT_TESTS=OFF
 )
 
 if [ -n "$OPS_CONFIG" ]; then
@@ -115,6 +116,16 @@ if [ -n "$OPS_CONFIG" ]; then
 fi
 
 ./build.sh "${BUILD_ARGS[@]}"
+
+# Ensure all dependencies (like re2) are built
+echo "Building additional dependencies..."
+pushd "$LIB_DIR/MinSizeRel" >/dev/null
+if [ -d "_deps/re2-build" ] && [ ! -f "_deps/re2-build/libre2.a" ]; then
+  echo "Building re2 library..."
+  make -C _deps/re2-build -j$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+fi
+popd >/dev/null
+
 popd >/dev/null
 
 echo "ONNX Runtime build finished under $SRC_DIR"

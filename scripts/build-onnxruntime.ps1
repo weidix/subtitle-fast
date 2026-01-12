@@ -134,7 +134,8 @@ $buildArgs = @(
     "--skip_tests",
     "--disable_ml_ops",
     "--disable_rtti",
-    "--build_dir", $LibDir
+    "--build_dir", $LibDir,
+    "--cmake_extra_defines", "onnxruntime_BUILD_UNIT_TESTS=OFF"
 )
 
 if ($OpsConfig) {
@@ -146,6 +147,19 @@ if ($OpsConfig) {
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
     throw "Build failed with exit code $LASTEXITCODE"
+}
+
+# Ensure all dependencies (like re2) are built
+Write-Host "Building additional dependencies..."
+$MinSizeRelDir = Join-Path $LibDir "MinSizeRel"
+$Re2BuildDir = Join-Path $MinSizeRelDir "_deps\re2-build"
+$Re2Lib = Join-Path $Re2BuildDir "re2.lib"
+
+if ((Test-Path $Re2BuildDir) -and -not (Test-Path $Re2Lib)) {
+    Write-Host "Building re2 library..."
+    Push-Location $MinSizeRelDir
+    & cmake --build . --target re2 --config MinSizeRel
+    Pop-Location
 }
 
 Pop-Location

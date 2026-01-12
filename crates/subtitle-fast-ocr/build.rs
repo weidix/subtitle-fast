@@ -1,4 +1,3 @@
-#[cfg(target_os = "macos")]
 use std::env;
 
 #[cfg(target_os = "macos")]

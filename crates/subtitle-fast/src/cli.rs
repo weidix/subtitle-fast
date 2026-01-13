@@ -12,6 +12,7 @@ pub struct CliSources {
     pub detector_delta_from_cli: bool,
     pub comparator_from_cli: bool,
     pub detector_roi_from_cli: bool,
+    pub ocr_backend_from_cli: bool,
 }
 
 impl CliSources {
@@ -23,6 +24,7 @@ impl CliSources {
             detector_delta_from_cli: value_from_cli(matches, "detector_delta"),
             comparator_from_cli: value_from_cli(matches, "comparator"),
             detector_roi_from_cli: value_from_cli(matches, "roi"),
+            ocr_backend_from_cli: value_from_cli(matches, "ocr_backend"),
         }
     }
 }
@@ -99,6 +101,10 @@ pub struct CliArgs {
     /// Output subtitle file path
     #[arg(short = 'o', long = "output")]
     pub output: Option<PathBuf>,
+
+    /// OCR backend to use (auto, vision, ort, noop)
+    #[arg(long = "ocr-backend", id = "ocr_backend")]
+    pub ocr_backend: Option<String>,
 
     /// Input video path
     pub input: Option<PathBuf>,

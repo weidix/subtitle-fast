@@ -12,3 +12,6 @@ delta = 12
 [decoder]
 # backend = "dxva" # Windows D3D11/DXVA; use "ffmpeg" or "mft" as fallbacks
 # channel_capacity = 32
+
+[ocr]
+# backend = "auto" # auto | vision | ort | noop

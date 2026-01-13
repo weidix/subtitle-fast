@@ -9,7 +9,9 @@ use tokio::sync::{oneshot, watch};
 
 use crate::gui::components::{VideoLumaHandle, VideoRoiHandle};
 use crate::gui::runtime;
-use crate::settings::{DecoderSettings, DetectionSettings, EffectiveSettings, OutputSettings};
+use crate::settings::{
+    DecoderSettings, DetectionSettings, EffectiveSettings, OcrSettings, OutputSettings,
+};
 use crate::stage::{
     self, MergedSubtitle, PipelineConfig, PipelineHandle, PipelineProgress, SubtitleUpdate,
     SubtitleUpdateKind, TimedSubtitle,
@@ -231,6 +233,7 @@ impl DetectionPipelineInner {
                 backend: None,
                 channel_capacity: None,
             },
+            ocr: OcrSettings { backend: None },
             output: OutputSettings { path: None },
         };
         let plan = match build_detection_plan(&path, &settings) {

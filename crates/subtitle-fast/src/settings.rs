@@ -17,6 +17,7 @@ use crate::cli::{CliArgs, CliSources};
 struct FileConfig {
     detection: Option<DetectionFileConfig>,
     decoder: Option<DecoderFileConfig>,
+    ocr: Option<OcrFileConfig>,
     output: Option<OutputFileConfig>,
 }
 
@@ -48,6 +49,12 @@ struct RoiFileConfig {
 
 #[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
+struct OcrFileConfig {
+    backend: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(default)]
 struct OutputFileConfig {
     path: Option<PathBuf>,
 }
@@ -56,6 +63,7 @@ struct OutputFileConfig {
 pub struct EffectiveSettings {
     pub detection: DetectionSettings,
     pub decoder: DecoderSettings,
+    pub ocr: OcrSettings,
     pub output: OutputSettings,
 }
 
@@ -77,6 +85,11 @@ pub struct DetectionSettings {
 pub struct DecoderSettings {
     pub backend: Option<String>,
     pub channel_capacity: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OcrSettings {
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -219,11 +232,13 @@ fn merge(
     let FileConfig {
         detection: file_detection,
         decoder: file_decoder,
+        ocr: file_ocr,
         output: file_output,
     } = file;
 
     let detection_cfg = file_detection.unwrap_or_default();
     let decoder_cfg = file_decoder.unwrap_or_default();
+    let ocr_cfg = file_ocr.unwrap_or_default();
     let output_cfg = file_output.unwrap_or_default();
 
     let detection_samples_per_second = resolve_detection_sps(
@@ -275,6 +290,11 @@ fn merge(
         channel_capacity: decoder_channel_capacity,
     };
 
+    let ocr_settings = OcrSettings {
+        backend: normalize_string(cli.ocr_backend.clone())
+            .or_else(|| normalize_string(ocr_cfg.backend)),
+    };
+
     let output_settings = OutputSettings {
         path: cli.output.clone().or(output_cfg.path),
     };
@@ -288,6 +308,7 @@ fn merge(
             roi: Some(detection_roi),
         },
         decoder: decoder_settings,
+        ocr: ocr_settings,
         output: output_settings,
     };
 

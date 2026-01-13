@@ -56,6 +56,9 @@ delta = 12
 [decoder]
 # backend = "dxva"
 # channel_capacity = 32
+
+[ocr]
+# backend = "auto" # auto | vision | ort | noop
 ```
 
 CLI flags like `--detector-target`, `--detector-delta`, `--roi x,y,width,height`, `--backend`, and `--ocr-backend` override the file settings. Omit the ROI flag or use a zero-sized ROI to scan the full frame.

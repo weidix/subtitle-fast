@@ -25,6 +25,7 @@ Each step runs asynchronously, allowing the CLI to keep decoding even when OCR i
 - The repo includes `config.toml.example` as a template; copy it next to your input or into your platform config dir.
 - Optional environment variables from the decoder crate still apply (`SUBFAST_BACKEND`, `SUBFAST_INPUT`,
   `SUBFAST_CHANNEL_CAPACITY`).
+- OCR backend can be set with `--ocr-backend` or `[ocr].backend` in the config file.
 - The CLI derives sensible defaults (for example seven detection samples per second) and stores them alongside the final
   plan so the logs can explain how each setting was chosen.
 

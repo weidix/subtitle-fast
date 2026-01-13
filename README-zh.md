@@ -41,6 +41,9 @@ delta = 12
 [decoder]
 # backend = "dxva"
 # channel_capacity = 32
+
+[ocr]
+# backend = "auto" # auto | vision | ort | noop
 ```
 
 常用覆盖：`--detector-target`、`--detector-delta`、`--roi x,y,width,height`、`--backend`、`--ocr-backend`。ROI 归一化到 0-1，省略或设为零尺寸时默认全屏检测。

@@ -171,12 +171,15 @@ impl Render for ConfirmDialog {
                 .text_color(theme.text)
                 .cursor_pointer()
                 .hover(move |style| style.bg(theme.hover_bg))
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _event, window, cx| {
-                    (on_click)(window, cx);
-                    if close_on_click {
-                        this.close(cx);
-                    }
-                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _event, window, cx| {
+                        (on_click)(window, cx);
+                        if close_on_click {
+                            this.close(cx);
+                        }
+                    }),
+                )
                 .child(label);
 
             buttons_row = buttons_row.child(button_view);

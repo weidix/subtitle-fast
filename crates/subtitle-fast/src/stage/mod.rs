@@ -258,7 +258,60 @@ pub fn pipeline_error_to_frame(err: PipelineError) -> DecoderError {
     }
 }
 
-fn build_ocr_engine(_settings: &EffectiveSettings) -> Arc<dyn OcrEngine> {
+fn build_ocr_engine(settings: &EffectiveSettings) -> Arc<dyn OcrEngine> {
+    if let Some(backend) = settings
+        .ocr
+        .backend
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase())
+    {
+        if backend == "auto" {
+            return build_ocr_engine_auto();
+        }
+        if let Some(engine) = build_ocr_engine_requested(&backend) {
+            return engine;
+        }
+        eprintln!("ocr backend '{backend}' unavailable, falling back to auto");
+    }
+    build_ocr_engine_auto()
+}
+
+fn build_ocr_engine_requested(backend: &str) -> Option<Arc<dyn OcrEngine>> {
+    match backend {
+        "noop" => Some(Arc::new(NoopOcrEngine)),
+        "vision" => {
+            #[cfg(all(feature = "ocr-vision", target_os = "macos"))]
+            {
+                return VisionOcrEngine::new()
+                    .map(|engine| Arc::new(engine) as Arc<dyn OcrEngine>)
+                    .map_err(|err| {
+                        eprintln!("vision OCR engine failed to initialize: {err}");
+                        err
+                    })
+                    .ok();
+            }
+            #[allow(unreachable_code)]
+            None
+        }
+        "ort" => {
+            #[cfg(feature = "ocr-ort")]
+            {
+                return OrtOcrEngine::new()
+                    .map(|engine| Arc::new(engine) as Arc<dyn OcrEngine>)
+                    .map_err(|err| {
+                        eprintln!("ort OCR engine failed to initialize: {err}");
+                        err
+                    })
+                    .ok();
+            }
+            #[allow(unreachable_code)]
+            None
+        }
+        _ => None,
+    }
+}
+
+fn build_ocr_engine_auto() -> Arc<dyn OcrEngine> {
     #[cfg(all(feature = "ocr-vision", target_os = "macos"))]
     {
         match VisionOcrEngine::new() {

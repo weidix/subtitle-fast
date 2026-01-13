@@ -407,6 +407,9 @@ impl MainWindow {
         }
 
         let handle = ConfigWindow::open(cx);
+        let _ = handle.update(cx, |_, window, _| {
+            window.activate_window();
+        });
         self.config_window = Some(handle);
     }
 
@@ -422,6 +425,9 @@ impl MainWindow {
         }
 
         if let Some(handle) = HelpWindow::open(cx) {
+            let _ = handle.update(cx, |_, window, _| {
+                window.activate_window();
+            });
             self.help_window = Some(handle);
         }
     }
@@ -1036,49 +1042,16 @@ impl Render for MainWindow {
                     .child(self.titlebar.clone()),
             )
             .child({
-                let mut settings_bar = div().flex_none().bg(rgb(0x191919)).flex().items_center();
-
                 if cfg!(target_os = "macos") {
-                    settings_bar = settings_bar
+                    div()
+                        .flex_none()
                         .h(px(0.0))
                         .px(px(0.0))
                         .border_b(px(0.0))
-                        .border_color(rgb(SIDEBAR_BORDER_COLOR));
-                } else {
-                    settings_bar = settings_bar
-                        .h(px(36.0))
-                        .px(px(12.0))
-                        .border_b(px(SIDEBAR_BORDER_WIDTH))
                         .border_color(rgb(SIDEBAR_BORDER_COLOR))
-                        .justify_end();
-
-                    let settings_button = div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .rounded(px(6.0))
-                        .px(px(10.0))
-                        .py(px(6.0))
-                        .cursor_pointer()
-                        .hover(|style| style.bg(hsla(0.0, 0.0, 1.0, 0.08)))
-                        .child(icon_sm(Icon::Gauge, hsla(0.0, 0.0, 0.85, 1.0)))
-                        .child(
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(hsla(0.0, 0.0, 0.85, 1.0))
-                                .child("Settings"),
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _event, window, cx| {
-                                this.open_config_window(window, cx);
-                            }),
-                        );
-
-                    settings_bar = settings_bar.child(settings_button);
+                } else {
+                    div().h(px(0.0))
                 }
-
-                settings_bar
             })
             .child({
                 let mut video_frame = div()

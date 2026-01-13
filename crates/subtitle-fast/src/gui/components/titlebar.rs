@@ -245,13 +245,21 @@ impl Render for Titlebar {
         let text_color = self.titlebar_text_color(window);
         let height = Self::height(window);
         let children = mem::take(&mut self.children);
+        let has_title = !self.title.as_ref().is_empty();
+        let has_children = !children.is_empty();
+        let content_padding =
+            if self.platform_style != PlatformStyle::Mac && !has_title && has_children {
+                px(0.0)
+            } else {
+                px(12.0)
+            };
 
         let drag_region = div()
             .flex()
             .items_center()
             .h_full()
             .flex_1()
-            .px(px(12.0))
+            .px(content_padding)
             .window_control_area(WindowControlArea::Drag)
             .on_mouse_down_out(cx.listener(|this, _ev, _window, _| {
                 this.should_move = false;

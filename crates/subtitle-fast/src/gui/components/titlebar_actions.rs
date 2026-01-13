@@ -5,7 +5,7 @@ use gpui::{App, Context, MouseButton, Render, Window, div, hsla, px};
 
 use crate::gui::icons::{Icon, icon_sm};
 
-const BUTTON_SIZE: f32 = 28.0;
+const BUTTON_WIDTH: f32 = 28.0;
 
 #[derive(Clone)]
 pub struct TitlebarActionsCallbacks {
@@ -39,8 +39,8 @@ impl Render for TitlebarActions {
                 .flex()
                 .items_center()
                 .justify_center()
-                .w(px(BUTTON_SIZE))
-                .h(px(BUTTON_SIZE))
+                .w(px(BUTTON_WIDTH))
+                .h_full()
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover_bg))
                 .child(icon_sm(Icon::SlidersHorizontal, icon_color))
@@ -55,8 +55,8 @@ impl Render for TitlebarActions {
                 .flex()
                 .items_center()
                 .justify_center()
-                .w(px(BUTTON_SIZE))
-                .h(px(BUTTON_SIZE))
+                .w(px(BUTTON_WIDTH))
+                .h_full()
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover_bg))
                 .child(icon_sm(Icon::Info, icon_color))

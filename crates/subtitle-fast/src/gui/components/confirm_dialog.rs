@@ -135,7 +135,12 @@ impl Render for ConfirmDialog {
                 .text_color(hsla(0.0, 0.0, 0.92, 1.0))
                 .child(text.clone())
                 .into_any_element(),
-            ConfirmDialogTitle::Element(builder) => builder(),
+            ConfirmDialogTitle::Element(builder) => div()
+                .text_size(px(14.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(hsla(0.0, 0.0, 0.92, 1.0))
+                .child(builder())
+                .into_any_element(),
         };
 
         let message = div()

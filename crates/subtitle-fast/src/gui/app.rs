@@ -442,7 +442,7 @@ impl MainWindow {
         };
 
         let label = session.label.clone();
-        let title_text: SharedString = format!("Stop \"{label}\"?").into();
+        let title_text: SharedString = "Stop task?".into();
         let message: SharedString =
             format!("Stop processing \"{label}\"? You can restart this task later.").into();
         let main_handle = cx.entity().downgrade();
@@ -452,6 +452,7 @@ impl MainWindow {
                 .flex()
                 .items_center()
                 .gap(px(6.0))
+                .text_color(hsla(0.0, 0.0, 0.92, 1.0))
                 .child(icon_sm(Icon::Stop, hsla(0.0, 0.0, 0.85, 1.0)))
                 .child(title_text.clone())
                 .into_any_element()
@@ -502,7 +503,7 @@ impl MainWindow {
         };
 
         let label = session.label.clone();
-        let title_text: SharedString = format!("Remove \"{label}\"?").into();
+        let title_text: SharedString = "Remove task?".into();
         let message: SharedString =
             format!("Remove \"{label}\" from the task list? This will discard its results.").into();
         let main_handle = cx.entity().downgrade();
@@ -512,6 +513,7 @@ impl MainWindow {
                 .flex()
                 .items_center()
                 .gap(px(6.0))
+                .text_color(hsla(0.0, 0.0, 0.92, 1.0))
                 .child(icon_sm(Icon::Trash, hsla(0.0, 0.0, 0.85, 1.0)))
                 .child(title_text.clone())
                 .into_any_element()

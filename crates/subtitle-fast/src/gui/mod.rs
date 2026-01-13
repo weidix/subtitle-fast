@@ -1,6 +1,7 @@
 pub mod app;
 pub mod components;
 pub mod icons;
+pub mod menus;
 pub mod runtime;
 pub mod session;
 

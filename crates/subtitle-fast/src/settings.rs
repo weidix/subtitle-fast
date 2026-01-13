@@ -5,58 +5,58 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use directories::ProjectDirs;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use subtitle_fast_comparator::ComparatorKind;
 use subtitle_fast_types::RoiConfig;
 use subtitle_fast_validator::subtitle_detection::{DEFAULT_DELTA, DEFAULT_TARGET};
 
 use crate::cli::{CliArgs, CliSources};
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
-struct FileConfig {
-    detection: Option<DetectionFileConfig>,
-    decoder: Option<DecoderFileConfig>,
-    ocr: Option<OcrFileConfig>,
-    output: Option<OutputFileConfig>,
+pub(crate) struct FileConfig {
+    pub(crate) detection: Option<DetectionFileConfig>,
+    pub(crate) decoder: Option<DecoderFileConfig>,
+    pub(crate) ocr: Option<OcrFileConfig>,
+    pub(crate) output: Option<OutputFileConfig>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(default)]
-struct DecoderFileConfig {
-    backend: Option<String>,
-    channel_capacity: Option<usize>,
+pub(crate) struct DecoderFileConfig {
+    pub(crate) backend: Option<String>,
+    pub(crate) channel_capacity: Option<usize>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(default)]
-struct DetectionFileConfig {
-    samples_per_second: Option<u32>,
-    target: Option<u8>,
-    delta: Option<u8>,
-    comparator: Option<String>,
-    roi: Option<RoiFileConfig>,
+pub(crate) struct DetectionFileConfig {
+    pub(crate) samples_per_second: Option<u32>,
+    pub(crate) target: Option<u8>,
+    pub(crate) delta: Option<u8>,
+    pub(crate) comparator: Option<String>,
+    pub(crate) roi: Option<RoiFileConfig>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(default)]
-struct RoiFileConfig {
-    x: Option<f32>,
-    y: Option<f32>,
-    width: Option<f32>,
-    height: Option<f32>,
+pub(crate) struct RoiFileConfig {
+    pub(crate) x: Option<f32>,
+    pub(crate) y: Option<f32>,
+    pub(crate) width: Option<f32>,
+    pub(crate) height: Option<f32>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(default)]
-struct OcrFileConfig {
-    backend: Option<String>,
+pub(crate) struct OcrFileConfig {
+    pub(crate) backend: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(default)]
-struct OutputFileConfig {
-    path: Option<PathBuf>,
+pub(crate) struct OutputFileConfig {
+    pub(crate) path: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -315,9 +315,21 @@ fn merge(
     Ok(ResolvedSettings { settings })
 }
 
-fn default_config_path() -> Option<PathBuf> {
+pub(crate) fn default_config_path() -> Option<PathBuf> {
     ProjectDirs::from("rs", "subtitle-fast", "subtitle-fast")
         .map(|dirs| dirs.config_dir().join("config.toml"))
+}
+
+pub(crate) fn load_file_config(path: &Path) -> Result<FileConfig, ConfigError> {
+    let contents = fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let config = toml::from_str(&contents).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(config)
 }
 
 fn project_config_path() -> Option<PathBuf> {

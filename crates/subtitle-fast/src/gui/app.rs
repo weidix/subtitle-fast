@@ -7,14 +7,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::gui::components::{
-    CollapseDirection, ColorPicker, ConfirmDialog, ConfirmDialogButton, ConfirmDialogButtonStyle,
-    ConfirmDialogConfig, ConfirmDialogTitle, DetectedSubtitlesList, DetectionControls,
-    DetectionHandle, DetectionMetrics, DetectionSidebar, DetectionSidebarHost, DragRange,
-    DraggableEdge, FramePreprocessor, Nv12FrameInfo, Sidebar, SidebarHandle, TaskSidebar,
-    TaskSidebarCallbacks, Titlebar, VideoControls, VideoLumaControls, VideoLumaHandle, VideoPlayer,
-    VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay, VideoToolbar,
+    CollapseDirection, ColorPicker, ConfigWindow, ConfirmDialog, ConfirmDialogButton,
+    ConfirmDialogButtonStyle, ConfirmDialogConfig, ConfirmDialogTitle, DetectedSubtitlesList,
+    DetectionControls, DetectionHandle, DetectionMetrics, DetectionSidebar, DetectionSidebarHost,
+    DragRange, DraggableEdge, FramePreprocessor, HelpWindow, MenuBar, Nv12FrameInfo, Sidebar,
+    SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar, VideoControls, VideoLumaControls,
+    VideoLumaHandle, VideoPlayer, VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle,
+    VideoRoiOverlay, VideoToolbar,
 };
 use crate::gui::icons::{Icon, icon_md, icon_sm};
+use crate::gui::menus;
 use crate::gui::session::{SessionHandle, SessionId, VideoSession};
 
 #[derive(RustEmbed)]
@@ -73,6 +75,7 @@ impl SubtitleFastApp {
                 move |_, cx| {
                     let sessions = SessionHandle::new();
                     let titlebar = cx.new(|_| Titlebar::new("main-titlebar", "subtitle-fast"));
+                    let titlebar_for_window = titlebar.clone();
                     let task_sidebar_view = cx.new(|_| {
                         TaskSidebar::new(
                             sessions.clone(),
@@ -118,6 +121,14 @@ impl SubtitleFastApp {
                     let color_picker_view = cx.new(|_| color_picker);
                     let toolbar_view = cx.new(|_| VideoToolbar::new());
                     let confirm_dialog_view = cx.new(|_| ConfirmDialog::new());
+                    let menu_bar = if cfg!(target_os = "macos") {
+                        None
+                    } else {
+                        Some(cx.new(|cx| {
+                            let menus = cx.get_menus().unwrap_or_default();
+                            MenuBar::new(menus)
+                        }))
+                    };
                     let (roi_overlay, roi_handle) = VideoRoiOverlay::new();
                     let roi_overlay_view = cx.new(|_| roi_overlay);
                     let _ = toolbar_view.update(cx, |toolbar_view, cx| {
@@ -145,7 +156,7 @@ impl SubtitleFastApp {
                     let main_window = cx.new(|_| {
                         MainWindow::new(
                             None,
-                            titlebar,
+                            titlebar_for_window,
                             left_panel,
                             left_panel_handle,
                             right_panel,
@@ -159,6 +170,7 @@ impl SubtitleFastApp {
                             roi_overlay_view,
                             roi_handle,
                             confirm_dialog_view.clone(),
+                            menu_bar,
                         )
                     });
                     let weak_main = main_window.downgrade();
@@ -210,7 +222,11 @@ impl SubtitleFastApp {
             )
             .unwrap();
 
-        window
+        let main_window = gpui::AnyWindowHandle::from(window);
+        menus::set_main_window(main_window, cx);
+        main_window
+            .downcast::<MainWindow>()
+            .expect("main window type mismatch")
     }
 }
 
@@ -268,6 +284,9 @@ pub struct MainWindow {
     roi_overlay: Entity<VideoRoiOverlay>,
     roi_handle: VideoRoiHandle,
     confirm_dialog: Entity<ConfirmDialog>,
+    menu_bar: Option<Entity<MenuBar>>,
+    config_window: Option<WindowHandle<ConfigWindow>>,
+    help_window: Option<WindowHandle<HelpWindow>>,
 }
 
 impl MainWindow {
@@ -287,6 +306,7 @@ impl MainWindow {
         roi_overlay: Entity<VideoRoiOverlay>,
         roi_handle: VideoRoiHandle,
         confirm_dialog: Entity<ConfirmDialog>,
+        menu_bar: Option<Entity<MenuBar>>,
     ) -> Self {
         Self {
             player,
@@ -310,10 +330,50 @@ impl MainWindow {
             roi_overlay,
             roi_handle,
             confirm_dialog,
+            menu_bar,
+            config_window: None,
+            help_window: None,
         }
     }
 
-    fn prompt_for_video(&mut self, window: &mut Window, select_new: bool, cx: &mut Context<Self>) {
+    /// Opens the settings window or focuses it if already open.
+    pub(crate) fn open_config_window(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(handle) = self.config_window {
+            if handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+            {
+                return;
+            }
+        }
+
+        let handle = ConfigWindow::open(cx);
+        self.config_window = Some(handle);
+    }
+
+    /// Opens the help window or focuses it if already open.
+    pub(crate) fn open_help_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.help_window {
+            if handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+            {
+                return;
+            }
+        }
+
+        if let Some(handle) = HelpWindow::open(cx) {
+            self.help_window = Some(handle);
+        }
+    }
+
+    /// Prompts the user to select a video file and queues a new session.
+    pub(crate) fn prompt_for_video(
+        &mut self,
+        window: &mut Window,
+        select_new: bool,
+        cx: &mut Context<Self>,
+    ) {
         let options = PathPromptOptions {
             files: true,
             directories: false,
@@ -551,6 +611,32 @@ impl MainWindow {
         );
     }
 
+    /// Requests removal of the active session, or shows a warning if none is selected.
+    pub(crate) fn request_remove_active_session(&mut self, cx: &mut Context<Self>) {
+        if let Some(session_id) = self.active_session {
+            self.request_remove_session(session_id, cx);
+            return;
+        }
+
+        let ok_button = ConfirmDialogButton::new(
+            "OK",
+            ConfirmDialogButtonStyle::Primary,
+            true,
+            Arc::new(|_, _| {}),
+        );
+        self.open_confirm_dialog(
+            ConfirmDialogConfig {
+                title: ConfirmDialogTitle::text("No active task"),
+                message: "Select a task before removing it.".into(),
+                buttons: vec![ok_button],
+                show_backdrop: true,
+                backdrop_color: hsla(0.0, 0.0, 0.0, 0.55),
+                close_on_outside: true,
+            },
+            cx,
+        );
+    }
+
     fn save_active_session_state(&mut self, cx: &App) {
         let Some(session_id) = self.active_session else {
             return;
@@ -762,6 +848,56 @@ impl Render for MainWindow {
                     .border_color(rgb(SIDEBAR_BORDER_COLOR))
                     .child(self.titlebar.clone()),
             )
+            .child({
+                let mut settings_bar = div().flex_none().bg(rgb(0x191919)).flex().items_center();
+
+                if cfg!(target_os = "macos") {
+                    settings_bar = settings_bar
+                        .h(px(0.0))
+                        .px(px(0.0))
+                        .border_b(px(0.0))
+                        .border_color(rgb(SIDEBAR_BORDER_COLOR));
+                } else {
+                    settings_bar = settings_bar
+                        .h(px(36.0))
+                        .px(px(12.0))
+                        .border_b(px(SIDEBAR_BORDER_WIDTH))
+                        .border_color(rgb(SIDEBAR_BORDER_COLOR))
+                        .justify_between();
+
+                    let mut menu_cluster = div().flex().items_center().gap(px(8.0));
+                    if let Some(menu_bar) = self.menu_bar.clone() {
+                        menu_cluster = menu_cluster.child(menu_bar);
+                    }
+
+                    let settings_button = div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .rounded(px(6.0))
+                        .px(px(10.0))
+                        .py(px(6.0))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(hsla(0.0, 0.0, 1.0, 0.08)))
+                        .child(icon_sm(Icon::Gauge, hsla(0.0, 0.0, 0.85, 1.0)))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(hsla(0.0, 0.0, 0.85, 1.0))
+                                .child("Settings"),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _event, window, cx| {
+                                this.open_config_window(window, cx);
+                            }),
+                        );
+
+                    settings_bar = settings_bar.child(menu_cluster).child(settings_button);
+                }
+
+                settings_bar
+            })
             .child({
                 let mut video_frame = div()
                     .flex()

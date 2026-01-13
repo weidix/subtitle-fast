@@ -100,10 +100,7 @@ struct RoiRect {
 
 impl VisionTextDetector {
     pub fn new(config: SubtitleDetectionConfig) -> Result<Self, SubtitleDetectionError> {
-        let required_bytes = config
-            .stride
-            .checked_mul(config.frame_height)
-            .unwrap_or(usize::MAX);
+        let required_bytes = config.stride.saturating_mul(config.frame_height);
         if required_bytes == usize::MAX {
             return Err(SubtitleDetectionError::InsufficientData {
                 data_len: 0,

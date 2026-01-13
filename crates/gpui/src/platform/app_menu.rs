@@ -6,6 +6,9 @@ pub struct Menu {
     /// The name of the menu
     pub name: SharedString,
 
+    /// The icon for the menu
+    pub icon: Option<SharedString>,
+
     /// The items in the menu
     pub items: Vec<MenuItem>,
 }
@@ -15,6 +18,7 @@ impl Menu {
     pub fn owned(self) -> OwnedMenu {
         OwnedMenu {
             name: self.name.to_string().into(),
+            icon: self.icon.map(|i| i.to_string().into()),
             items: self.items.into_iter().map(|item| item.owned()).collect(),
         }
     }
@@ -64,6 +68,9 @@ pub enum MenuItem {
         /// The name of this menu item
         name: SharedString,
 
+        /// The path to the icon for this menu item
+        icon: Option<SharedString>,
+
         /// the action to perform when this menu item is selected
         action: Box<dyn Action>,
 
@@ -96,6 +103,7 @@ impl MenuItem {
     pub fn action(name: impl Into<SharedString>, action: impl Action) -> Self {
         Self::Action {
             name: name.into(),
+            icon: None,
             action: Box::new(action),
             os_action: None,
         }
@@ -109,9 +117,18 @@ impl MenuItem {
     ) -> Self {
         Self::Action {
             name: name.into(),
+            icon: None,
             action: Box::new(action),
             os_action: Some(os_action),
         }
+    }
+
+    /// Sets the icon for the menu item
+    pub fn with_icon(mut self, icon_path: impl Into<SharedString>) -> Self {
+        if let MenuItem::Action { icon, .. } = &mut self {
+            *icon = Some(icon_path.into());
+        }
+        self
     }
 
     /// Create an OwnedMenuItem from this MenuItem
@@ -121,10 +138,12 @@ impl MenuItem {
             MenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.owned()),
             MenuItem::Action {
                 name,
+                icon,
                 action,
                 os_action,
             } => OwnedMenuItem::Action {
                 name: name.into(),
+                icon: icon.map(|i| i.to_string()),
                 action,
                 os_action,
             },
@@ -151,6 +170,9 @@ pub struct OwnedMenu {
     /// The name of the menu
     pub name: SharedString,
 
+    /// The icon for the menu
+    pub icon: Option<SharedString>,
+
     /// The items in the menu
     pub items: Vec<OwnedMenuItem>,
 }
@@ -171,6 +193,9 @@ pub enum OwnedMenuItem {
         /// The name of this menu item
         name: String,
 
+        /// The path to the icon for this menu item
+        icon: Option<String>,
+
         /// the action to perform when this menu item is selected
         action: Box<dyn Action>,
 
@@ -187,10 +212,12 @@ impl Clone for OwnedMenuItem {
             OwnedMenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.clone()),
             OwnedMenuItem::Action {
                 name,
+                icon,
                 action,
                 os_action,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
+                icon: icon.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
             },

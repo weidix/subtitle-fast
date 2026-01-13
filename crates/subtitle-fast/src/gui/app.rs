@@ -74,7 +74,7 @@ impl SubtitleFastApp {
                 },
                 move |_, cx| {
                     let sessions = SessionHandle::new();
-                    let titlebar = cx.new(|_| Titlebar::new("main-titlebar", "subtitle-fast"));
+                    let titlebar = cx.new(|_| Titlebar::new("main-titlebar", ""));
                     let titlebar_for_window = titlebar.clone();
                     let task_sidebar_view = cx.new(|_| {
                         TaskSidebar::new(
@@ -455,6 +455,7 @@ impl MainWindow {
         } else {
             self.notify_task_sidebar(cx);
         }
+        self.refresh_app_menus(cx);
     }
 
     fn activate_session(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
@@ -487,6 +488,16 @@ impl MainWindow {
         }
         self.sessions.remove_session(session_id);
         self.notify_task_sidebar(cx);
+        self.refresh_app_menus(cx);
+    }
+
+    fn refresh_app_menus(&self, cx: &mut Context<Self>) {
+        let sessions = self.sessions.sessions_snapshot();
+        if cfg!(target_os = "macos") {
+            menus::set_macos_menus(cx, &sessions);
+        } else {
+            menus::set_app_menus(cx, &sessions);
+        }
     }
 
     fn open_confirm_dialog(&mut self, config: ConfirmDialogConfig, cx: &mut Context<Self>) {
@@ -557,7 +568,7 @@ impl MainWindow {
         self.notify_task_sidebar(cx);
     }
 
-    fn request_remove_session(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+    pub(crate) fn request_remove_session(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
         let Some(session) = self.sessions.session(session_id) else {
             return;
         };

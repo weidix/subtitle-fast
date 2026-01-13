@@ -4,11 +4,19 @@ use gpui::{
 };
 
 use crate::gui::app::MainWindow;
+use crate::gui::components::DetectionRunState;
+use crate::gui::session::{SessionId, VideoSession};
 
 actions!(
     subtitle_fast_menu,
     [Quit, OpenSettings, AddTask, RemoveTask, Help]
 );
+
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(no_json)]
+pub struct RemoveSpecificTask {
+    pub session_id: SessionId,
+}
 
 pub(crate) struct MainWindowState {
     handle: AnyWindowHandle,
@@ -52,7 +60,6 @@ pub fn register_actions(cx: &mut App) {
 
     cx.on_action(|_: &OpenSettings, cx| {
         defer_main_window_action(cx, |this, window, cx| {
-            println!("Opening config window from menu action");
             this.open_config_window(window, cx);
         });
     });
@@ -69,6 +76,13 @@ pub fn register_actions(cx: &mut App) {
         });
     });
 
+    cx.on_action(|action: &RemoveSpecificTask, cx| {
+        let session_id = action.session_id;
+        defer_main_window_action(cx, move |this, _window, cx| {
+            this.request_remove_session(session_id, cx);
+        });
+    });
+
     cx.on_action(|_: &Help, cx| {
         defer_main_window_action(cx, |this, _window, cx| {
             this.open_help_window(cx);
@@ -77,17 +91,25 @@ pub fn register_actions(cx: &mut App) {
 }
 
 /// Sets the menu bar for non-macOS platforms.
-pub fn set_app_menus(cx: &mut App) {
-    cx.set_menus(build_menus(SharedString::from("Menu"), false));
+pub fn set_app_menus(cx: &mut App, sessions: &[VideoSession]) {
+    cx.set_menus(build_menus(SharedString::from("Menu"), false, sessions));
 }
 
 /// Sets the macOS menu bar using native menus.
-pub fn set_macos_menus(cx: &mut App) {
-    cx.set_menus(build_menus(SharedString::from("subtitle-fast"), true));
+pub fn set_macos_menus(cx: &mut App, sessions: &[VideoSession]) {
+    cx.set_menus(build_menus(
+        SharedString::from("subtitle-fast"),
+        true,
+        sessions,
+    ));
 }
 
-fn build_menus(app_menu_title: SharedString, include_services: bool) -> Vec<Menu> {
-    let mut app_items = vec![MenuItem::action("Settings...", OpenSettings)];
+fn build_menus(
+    app_menu_title: SharedString,
+    include_services: bool,
+    sessions: &[VideoSession],
+) -> Vec<Menu> {
+    let mut app_items = vec![MenuItem::action("Settings...", OpenSettings).with_icon("gear")];
     if include_services {
         app_items.push(MenuItem::separator());
         app_items.push(MenuItem::os_submenu("Services", SystemMenuType::Services));
@@ -95,21 +117,57 @@ fn build_menus(app_menu_title: SharedString, include_services: bool) -> Vec<Menu
     app_items.push(MenuItem::separator());
     app_items.push(MenuItem::action("Quit subtitle-fast", Quit));
 
+    let remove_task_menu = if sessions.is_empty() {
+        MenuItem::action("Remove Task", RemoveTask).with_icon("trash")
+    } else {
+        MenuItem::submenu(Menu {
+            name: "Remove Task".into(),
+            icon: Some("trash".into()),
+            items: sessions
+                .iter()
+                .map(|session| {
+                    let run_state = session.detection.run_state();
+                    let progress = session.detection.progress_snapshot();
+                    let icon_name = if progress.completed {
+                        "checkmark.circle"
+                    } else {
+                        match run_state {
+                            DetectionRunState::Running => "play.fill",
+                            DetectionRunState::Paused => "pause.fill",
+                            DetectionRunState::Idle => "film",
+                        }
+                    };
+
+                    MenuItem::action(
+                        session.label.clone(),
+                        RemoveSpecificTask {
+                            session_id: session.id,
+                        },
+                    )
+                    .with_icon(icon_name)
+                })
+                .collect(),
+        })
+    };
+
     vec![
         Menu {
             name: app_menu_title.into(),
+            icon: None,
             items: app_items,
         },
         Menu {
             name: "Task".into(),
+            icon: None,
             items: vec![
-                MenuItem::action("Add Task", AddTask),
-                MenuItem::action("Remove Task", RemoveTask),
+                MenuItem::action("Add Task", AddTask).with_icon("plus"),
+                remove_task_menu,
             ],
         },
         Menu {
             name: "Help".into(),
-            items: vec![MenuItem::action("Help", Help)],
+            icon: None,
+            items: vec![MenuItem::action("Help", Help).with_icon("questionmark.circle")],
         },
     ]
 }

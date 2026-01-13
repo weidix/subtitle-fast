@@ -36,9 +36,9 @@ fn run_gui() -> Result<(), DecoderError> {
             bind_text_input_keys(cx);
             menus::register_actions(cx);
             if cfg!(target_os = "macos") {
-                menus::set_macos_menus(cx);
+                menus::set_macos_menus(cx, &[]);
             } else {
-                menus::set_app_menus(cx);
+                menus::set_app_menus(cx, &[]);
             }
             let app = SubtitleFastApp::new(cx);
             app.open_window(cx);

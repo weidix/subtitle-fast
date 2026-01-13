@@ -313,6 +313,7 @@ impl MacPlatform {
                 MenuItem::Separator => NSMenuItem::separatorItem(nil),
                 MenuItem::Action {
                     name,
+                    icon,
                     action,
                     os_action,
                 } => {
@@ -409,12 +410,37 @@ impl MacPlatform {
                             .autorelease();
                     }
 
+                    if let Some(icon_source) = icon {
+                        let ns_source = ns_string(icon_source.as_ref());
+                        let mut ns_image: id = nil;
+
+                        // 1. Try SF Symbols (macOS 11+)
+                        if Self::os_version() >= SemanticVersion::new(11, 0, 0) {
+                            ns_image = msg_send![class!(NSImage), imageWithSystemSymbolName: ns_source accessibilityDescription: nil];
+                        }
+
+                        // 2. Try named system images
+                        if ns_image == nil {
+                            ns_image = msg_send![class!(NSImage), imageNamed: ns_source];
+                        }
+
+                        // 3. Try file path
+                        if ns_image == nil {
+                            let alloc: id = msg_send![class!(NSImage), alloc];
+                            ns_image = msg_send![alloc, initWithContentsOfFile: ns_source];
+                        }
+
+                        if ns_image != nil {
+                            let _: () = msg_send![item, setImage: ns_image];
+                        }
+                    }
+
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
                     actions.push(action.boxed_clone());
                     item
                 }
-                MenuItem::Submenu(Menu { name, items }) => {
+                MenuItem::Submenu(Menu { name, icon, items }) => {
                     let item = NSMenuItem::new(nil).autorelease();
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
@@ -423,6 +449,32 @@ impl MacPlatform {
                     }
                     item.setSubmenu_(submenu);
                     item.setTitle_(ns_string(name));
+
+                    if let Some(icon_source) = icon {
+                        let ns_source = ns_string(icon_source.as_ref());
+                        let mut ns_image: id = nil;
+
+                        // 1. Try SF Symbols (macOS 11+)
+                        if Self::os_version() >= SemanticVersion::new(11, 0, 0) {
+                            ns_image = msg_send![class!(NSImage), imageWithSystemSymbolName: ns_source accessibilityDescription: nil];
+                        }
+
+                        // 2. Try named system images
+                        if ns_image == nil {
+                            ns_image = msg_send![class!(NSImage), imageNamed: ns_source];
+                        }
+
+                        // 3. Try file path
+                        if ns_image == nil {
+                            let alloc: id = msg_send![class!(NSImage), alloc];
+                            ns_image = msg_send![alloc, initWithContentsOfFile: ns_source];
+                        }
+
+                        if ns_image != nil {
+                            let _: () = msg_send![item, setImage: ns_image];
+                        }
+                    }
+
                     item
                 }
                 MenuItem::SystemMenu(OsMenu { name, menu_type }) => {

@@ -1,37 +1,42 @@
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Context, Render, ScrollHandle, SharedString, Styled, TitlebarOptions, Window,
-    WindowBounds, WindowHandle, WindowOptions, div, hsla, px, rgb, size,
+    App, Bounds, Context, Entity, Render, ScrollHandle, SharedString, Styled, TitlebarOptions,
+    Window, WindowBounds, WindowDecorations, WindowHandle, WindowOptions, div, hsla, px, rgb, size,
 };
+
+use crate::gui::components::Titlebar;
 
 /// Displays help content and license notices in a dedicated window.
 pub struct HelpWindow {
     scroll_handle: ScrollHandle,
+    titlebar: Entity<Titlebar>,
 }
 
 impl HelpWindow {
     /// Creates a new help window state.
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             scroll_handle: ScrollHandle::new(),
+            titlebar: cx.new(|_| Titlebar::new("help-titlebar", "Help")),
         }
     }
 
     /// Opens the help window or returns `None` if it could not be created.
     pub fn open(cx: &mut App) -> Option<WindowHandle<Self>> {
-        let bounds = Bounds::centered(None, size(px(560.0), px(520.0)), cx);
+        let bounds = Bounds::centered(None, size(px(820.0), px(640.0)), cx);
         match cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(520.0), px(420.0))),
+                window_min_size: Some(size(px(640.0), px(520.0))),
                 titlebar: Some(TitlebarOptions {
                     title: Some("subtitle-fast help".into()),
-                    appears_transparent: false,
+                    appears_transparent: true,
                     traffic_light_position: None,
                 }),
+                window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| HelpWindow::new()),
+            |_, cx| cx.new(|cx| HelpWindow::new(cx)),
         ) {
             Ok(handle) => Some(handle),
             Err(err) => {
@@ -103,21 +108,37 @@ impl Render for HelpWindow {
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(0x151515))
-            .px(px(20.0))
-            .py(px(18.0))
+            .min_h(px(0.0))
+            .bg(rgb(0x1b1b1b))
+            .child(
+                div()
+                    .flex_none()
+                    .border_b(px(1.0))
+                    .border_color(rgb(0x2b2b2b))
+                    .child(self.titlebar.clone()),
+            )
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(12.0))
                     .flex_1()
                     .min_h(px(0.0))
-                    .id(("help-scroll", cx.entity_id()))
-                    .overflow_y_scroll()
-                    .scrollbar_width(px(6.0))
-                    .track_scroll(&self.scroll_handle)
-                    .child(content),
+                    .gap(px(12.0))
+                    .px(px(20.0))
+                    .py(px(18.0))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.0))
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .id(("help-scroll", cx.entity_id()))
+                            .overflow_y_scroll()
+                            .scrollbar_width(px(6.0))
+                            .track_scroll(&self.scroll_handle)
+                            .child(content),
+                    ),
             )
     }
 }

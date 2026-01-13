@@ -9,12 +9,18 @@ use crate::gui::session::{SessionId, VideoSession};
 
 actions!(
     subtitle_fast_menu,
-    [Quit, OpenSettings, AddTask, RemoveTask, Help]
+    [Quit, OpenSettings, AddTask, RemoveTask, ToggleTask, Help]
 );
 
 #[derive(Clone, PartialEq, gpui::Action)]
 #[action(no_json)]
 pub struct RemoveSpecificTask {
+    pub session_id: SessionId,
+}
+
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(no_json)]
+pub struct ToggleSpecificTask {
     pub session_id: SessionId,
 }
 
@@ -76,10 +82,23 @@ pub fn register_actions(cx: &mut App) {
         });
     });
 
+    cx.on_action(|_: &ToggleTask, cx| {
+        defer_main_window_action(cx, |this, _window, cx| {
+            this.toggle_active_session_state(cx);
+        });
+    });
+
     cx.on_action(|action: &RemoveSpecificTask, cx| {
         let session_id = action.session_id;
         defer_main_window_action(cx, move |this, _window, cx| {
             this.request_remove_session(session_id, cx);
+        });
+    });
+
+    cx.on_action(|action: &ToggleSpecificTask, cx| {
+        let session_id = action.session_id;
+        defer_main_window_action(cx, move |this, _window, cx| {
+            this.toggle_session_state(session_id, cx);
         });
     });
 
@@ -150,6 +169,39 @@ fn build_menus(
         })
     };
 
+    let toggle_task_menu = if sessions.is_empty() {
+        MenuItem::action("Toggle Task State", ToggleTask).with_icon("bolt")
+    } else {
+        MenuItem::submenu(Menu {
+            name: "Toggle Task State".into(),
+            icon: Some("bolt".into()),
+            items: sessions
+                .iter()
+                .map(|session| {
+                    let run_state = session.detection.run_state();
+                    let progress = session.detection.progress_snapshot();
+                    let icon_name = if progress.completed {
+                        "checkmark.circle"
+                    } else {
+                        match run_state {
+                            DetectionRunState::Running => "pause.fill",
+                            DetectionRunState::Paused => "play.fill",
+                            DetectionRunState::Idle => "play.fill",
+                        }
+                    };
+
+                    MenuItem::action(
+                        session.label.clone(),
+                        ToggleSpecificTask {
+                            session_id: session.id,
+                        },
+                    )
+                    .with_icon(icon_name)
+                })
+                .collect(),
+        })
+    };
+
     vec![
         Menu {
             name: app_menu_title.into(),
@@ -161,6 +213,7 @@ fn build_menus(
             icon: None,
             items: vec![
                 MenuItem::action("Add Task", AddTask).with_icon("plus"),
+                toggle_task_menu,
                 remove_task_menu,
             ],
         },

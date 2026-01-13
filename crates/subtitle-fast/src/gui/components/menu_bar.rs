@@ -1,13 +1,12 @@
+use std::sync::Arc;
+
 use gpui::prelude::*;
 use gpui::{
-    Action, Bounds, Context, DispatchPhase, MouseButton, MouseDownEvent, OwnedMenu, OwnedMenuItem,
-    Pixels, Render, Window, div, hsla, px, rgb,
+    Action, Bounds, Context, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, OwnedMenu,
+    OwnedMenuItem, Pixels, Render, Window, div, hsla, px, rgb,
 };
 
-use crate::gui::icons::{Icon, icon_sm};
-
-const MENU_BUTTON_HEIGHT: f32 = 28.0;
-const MENU_BUTTON_RADIUS: f32 = 6.0;
+use super::menu_bar_buttons::{MenuBarButtons, MenuBarButtonsCallbacks};
 const MENU_POPUP_WIDTH: f32 = 200.0;
 const MENU_POPUP_RADIUS: f32 = 8.0;
 const MENU_POPUP_OFFSET_Y: f32 = 6.0;
@@ -82,14 +81,6 @@ impl MenuBar {
             }
         }
     }
-
-    fn display_menu_name(name: &str) -> &str {
-        if name == "subtitle-fast" {
-            "Menu"
-        } else {
-            name
-        }
-    }
 }
 
 impl Render for MenuBar {
@@ -97,7 +88,6 @@ impl Render for MenuBar {
         let text_color = hsla(0.0, 0.0, 1.0, 0.82);
         let muted_color = hsla(0.0, 0.0, 1.0, 0.5);
         let hover_bg = hsla(0.0, 0.0, 1.0, 0.08);
-        let active_bg = hsla(0.0, 0.0, 1.0, 0.14);
         let popup_bg = rgb(0x202020);
         let popup_border = rgb(0x2f2f2f);
 
@@ -132,70 +122,97 @@ impl Render for MenuBar {
             });
         }
 
-        let handle = cx.entity();
-        let menu_buttons = self
-            .menus
-            .iter()
-            .enumerate()
-            .map(|(index, menu)| {
-                let is_open = self.open_menu == Some(index);
-                let label = Self::display_menu_name(menu.name.as_ref()).to_string();
-                let button = div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .h(px(MENU_BUTTON_HEIGHT))
-                    .px(px(10.0))
-                    .rounded(px(MENU_BUTTON_RADIUS))
-                    .cursor_pointer()
-                    .hover(move |style| style.bg(hover_bg))
-                    .bg(if is_open {
-                        active_bg
-                    } else {
-                        hsla(0.0, 0.0, 0.0, 0.0)
-                    })
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(text_color)
-                            .child(label),
-                    )
-                    .child(icon_sm(Icon::ChevronDown, text_color))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _event, _window, cx| {
-                            this.toggle_menu(index, cx);
-                        }),
-                    );
+        if let Some(open_index) = self.open_menu {
+            let handle = cx.entity();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _window, cx| {
+                if phase != DispatchPhase::Capture {
+                    return;
+                }
+                let position = event.position;
+                let _ = handle.update(cx, |this, cx| {
+                    if this.open_menu != Some(open_index) {
+                        return;
+                    }
+                    let in_popup = this
+                        .popup_bounds
+                        .map(|bounds| bounds.contains(&position))
+                        .unwrap_or(false);
+                    if in_popup {
+                        return;
+                    }
 
-                let handle = handle.clone();
-                div()
-                    .on_children_prepainted(move |bounds, _window, cx| {
-                        let bounds = bounds.first().copied();
+                    let mut hover_index = None;
+                    for (index, bounds) in this.button_bounds.iter().enumerate() {
+                        if bounds
+                            .as_ref()
+                            .is_some_and(|bounds| bounds.contains(&position))
+                        {
+                            hover_index = Some(index);
+                            break;
+                        }
+                    }
+
+                    if let Some(index) = hover_index {
+                        if Some(index) != this.open_menu {
+                            this.open_menu = Some(index);
+                            this.popup_bounds = None;
+                            cx.notify();
+                        }
+                        return;
+                    }
+
+                    if let (Some(button_bounds), Some(popup_bounds)) = (
+                        this.button_bounds
+                            .get(open_index)
+                            .and_then(|bounds| *bounds),
+                        this.popup_bounds,
+                    ) {
+                        let between_y = position.y >= button_bounds.bottom()
+                            && position.y <= popup_bounds.top();
+                        let between_x = position.x >= button_bounds.left()
+                            && position.x <= button_bounds.right();
+                        if between_x && between_y {
+                            return;
+                        }
+                    }
+
+                    this.close_menu(cx);
+                });
+            });
+        }
+
+        let handle = cx.entity();
+        let menu_buttons = MenuBarButtons::new(
+            self.menus.clone(),
+            self.open_menu,
+            MenuBarButtonsCallbacks {
+                on_button_click: Arc::new(move |index, _window, cx| {
+                    let _ = handle.update(cx, |this, cx| {
+                        this.toggle_menu(index, cx);
+                    });
+                }),
+                on_button_bounds: {
+                    let handle = cx.entity();
+                    Arc::new(move |index, bounds, cx| {
                         let _ = handle.update(cx, |this, _| {
                             if let Some(slot) = this.button_bounds.get_mut(index) {
                                 *slot = bounds;
                             }
                         });
                     })
-                    .child(button)
-            })
-            .collect::<Vec<_>>();
+                },
+                on_bar_bounds: {
+                    let handle = cx.entity();
+                    Arc::new(move |bounds, cx| {
+                        let _ = handle.update(cx, |this, _| {
+                            this.bar_bounds = bounds;
+                        });
+                    })
+                },
+            },
+        );
 
-        let handle = cx.entity();
-        let menu_row = div()
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .on_children_prepainted(move |bounds, _window, cx| {
-                let bounds = bounds.first().copied();
-                let _ = handle.update(cx, |this, _| {
-                    this.bar_bounds = bounds;
-                });
-            })
-            .children(menu_buttons);
-
-        let mut root = div().relative().child(menu_row);
+        let mut root = div().relative().child(menu_buttons);
 
         if let Some(open_index) = self.open_menu {
             if let Some(menu) = self.menus.get(open_index) {

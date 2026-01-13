@@ -28,6 +28,7 @@ fn main() {
         // Add menu items
         cx.set_menus(vec![Menu {
             name: "set_menus".into(),
+            icon: None,
             items: vec![
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),

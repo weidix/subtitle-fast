@@ -13,6 +13,7 @@ use gpui::{
     relative, rgb, rgba, size,
 };
 
+use crate::gui::components::Titlebar;
 use crate::settings::{
     self, DecoderFileConfig, DetectionFileConfig, FileConfig, OcrFileConfig, OutputFileConfig,
     RoiFileConfig,
@@ -46,6 +47,7 @@ pub struct ConfigWindow {
     config_path: Option<PathBuf>,
     output_path: Option<PathBuf>,
     status: Option<StatusMessage>,
+    titlebar: Entity<Titlebar>,
 }
 
 #[derive(Clone)]
@@ -57,28 +59,31 @@ struct StatusMessage {
 impl ConfigWindow {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let fields = ConfigFields::new(cx);
+        let titlebar = cx.new(|_| Titlebar::new("config-titlebar", "Settings"));
         let mut window = Self {
             fields,
             scroll_handle: ScrollHandle::new(),
             config_path: settings::default_config_path(),
             output_path: None,
             status: None,
+            titlebar,
         };
         window.load_from_disk(cx);
         window
     }
 
     pub fn open(cx: &mut App) -> gpui::WindowHandle<Self> {
-        let bounds = Bounds::centered(None, size(px(540.0), px(640.0)), cx);
+        let bounds = Bounds::centered(None, size(px(820.0), px(680.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(520.0), px(520.0))),
+                window_min_size: Some(size(px(640.0), px(560.0))),
                 titlebar: Some(gpui::TitlebarOptions {
                     title: Some("subtitle-fast settings".into()),
-                    appears_transparent: false,
+                    appears_transparent: true,
                     traffic_light_position: None,
                 }),
+                window_decorations: Some(gpui::WindowDecorations::Client),
                 ..Default::default()
             },
             |_, cx| cx.new(|cx| ConfigWindow::new(cx)),
@@ -401,12 +406,28 @@ impl Render for ConfigWindow {
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(0x151515))
-            .p(px(20.0))
-            .gap(px(16.0))
-            .child(self.header_row(cx))
-            .child(self.status_row())
-            .child(self.fields_panel(cx))
+            .min_h(px(0.0))
+            .bg(rgb(0x1b1b1b))
+            .child(
+                div()
+                    .flex_none()
+                    .border_b(px(1.0))
+                    .border_color(rgb(0x2b2b2b))
+                    .child(self.titlebar.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .gap(px(16.0))
+                    .px(px(20.0))
+                    .py(px(18.0))
+                    .child(self.header_row(cx))
+                    .child(self.status_row())
+                    .child(self.fields_panel(cx)),
+            )
     }
 }
 

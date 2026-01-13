@@ -1,22 +1,27 @@
+use futures_channel::mpsc::unbounded;
+use futures_util::StreamExt;
 use gpui::prelude::*;
 use gpui::*;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::oneshot;
 
 use crate::gui::components::{
     CollapseDirection, ColorPicker, ConfigWindow, ConfirmDialog, ConfirmDialogButton,
     ConfirmDialogButtonStyle, ConfirmDialogConfig, ConfirmDialogTitle, DetectedSubtitlesList,
-    DetectionControls, DetectionHandle, DetectionMetrics, DetectionSidebar, DetectionSidebarHost,
-    DragRange, DraggableEdge, FramePreprocessor, HelpWindow, MenuBar, Nv12FrameInfo, Sidebar,
-    SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar, VideoControls, VideoLumaControls,
-    VideoLumaHandle, VideoPlayer, VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle,
-    VideoRoiOverlay, VideoToolbar,
+    DetectionControls, DetectionHandle, DetectionMetrics, DetectionRunState, DetectionSidebar,
+    DetectionSidebarHost, DragRange, DraggableEdge, FramePreprocessor, HelpWindow, Nv12FrameInfo,
+    Sidebar, SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar, TitlebarActions,
+    TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle, VideoPlayer,
+    VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay, VideoToolbar,
 };
 use crate::gui::icons::{Icon, icon_md, icon_sm};
 use crate::gui::menus;
+use crate::gui::runtime;
 use crate::gui::session::{SessionHandle, SessionId, VideoSession};
 
 #[derive(RustEmbed)]
@@ -121,14 +126,13 @@ impl SubtitleFastApp {
                     let color_picker_view = cx.new(|_| color_picker);
                     let toolbar_view = cx.new(|_| VideoToolbar::new());
                     let confirm_dialog_view = cx.new(|_| ConfirmDialog::new());
-                    let menu_bar = if cfg!(target_os = "macos") {
-                        None
-                    } else {
-                        Some(cx.new(|cx| {
-                            let menus = cx.get_menus().unwrap_or_default();
-                            MenuBar::new(menus)
-                        }))
-                    };
+                    let titlebar_actions = Some(cx.new(|_| {
+                        TitlebarActions::new(TitlebarActionsCallbacks {
+                            on_settings: Arc::new(|_, _| {}),
+                            on_help: Arc::new(|_, _| {}),
+                        })
+                    }));
+                    let titlebar_actions_view = titlebar_actions.clone();
                     let (roi_overlay, roi_handle) = VideoRoiOverlay::new();
                     let roi_overlay_view = cx.new(|_| roi_overlay);
                     let _ = toolbar_view.update(cx, |toolbar_view, cx| {
@@ -170,7 +174,7 @@ impl SubtitleFastApp {
                             roi_overlay_view,
                             roi_handle,
                             confirm_dialog_view.clone(),
-                            menu_bar,
+                            titlebar_actions,
                         )
                     });
                     let weak_main = main_window.downgrade();
@@ -217,6 +221,33 @@ impl SubtitleFastApp {
                             cx,
                         );
                     });
+                    let _ = titlebar_actions_view.as_ref().map(|titlebar_actions| {
+                        let settings_handle = weak_main.clone();
+                        let help_handle = weak_main.clone();
+                        titlebar_actions.update(cx, |actions, cx| {
+                            actions.set_callbacks(
+                                TitlebarActionsCallbacks {
+                                    on_settings: Arc::new(move |window, cx| {
+                                        let Some(main_window) = settings_handle.upgrade() else {
+                                            return;
+                                        };
+                                        let _ = main_window.update(cx, |this, cx| {
+                                            this.open_config_window(window, cx);
+                                        });
+                                    }),
+                                    on_help: Arc::new(move |_window, cx| {
+                                        let Some(main_window) = help_handle.upgrade() else {
+                                            return;
+                                        };
+                                        let _ = main_window.update(cx, |this, cx| {
+                                            this.open_help_window(cx);
+                                        });
+                                    }),
+                                },
+                                cx,
+                            );
+                        })
+                    });
                     main_window
                 },
             )
@@ -262,6 +293,32 @@ fn detection_sidebar_content(panel_view: Entity<DetectionSidebarHost>) -> AnyEle
         .into_any_element()
 }
 
+struct MenuRefreshListener {
+    _ui_task: Task<()>,
+    stop_tx: Option<oneshot::Sender<()>>,
+}
+
+impl MenuRefreshListener {
+    fn new(ui_task: Task<()>, stop_tx: oneshot::Sender<()>) -> Self {
+        Self {
+            _ui_task: ui_task,
+            stop_tx: Some(stop_tx),
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+    }
+}
+
+impl Drop for MenuRefreshListener {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 pub struct MainWindow {
     player: Option<Entity<VideoPlayer>>,
     controls: Option<VideoPlayerControlHandle>,
@@ -284,7 +341,8 @@ pub struct MainWindow {
     roi_overlay: Entity<VideoRoiOverlay>,
     roi_handle: VideoRoiHandle,
     confirm_dialog: Entity<ConfirmDialog>,
-    menu_bar: Option<Entity<MenuBar>>,
+    titlebar_actions: Option<Entity<TitlebarActions>>,
+    menu_refresh_listeners: HashMap<SessionId, MenuRefreshListener>,
     config_window: Option<WindowHandle<ConfigWindow>>,
     help_window: Option<WindowHandle<HelpWindow>>,
 }
@@ -306,7 +364,7 @@ impl MainWindow {
         roi_overlay: Entity<VideoRoiOverlay>,
         roi_handle: VideoRoiHandle,
         confirm_dialog: Entity<ConfirmDialog>,
-        menu_bar: Option<Entity<MenuBar>>,
+        titlebar_actions: Option<Entity<TitlebarActions>>,
     ) -> Self {
         Self {
             player,
@@ -330,7 +388,8 @@ impl MainWindow {
             roi_overlay,
             roi_handle,
             confirm_dialog,
-            menu_bar,
+            titlebar_actions,
+            menu_refresh_listeners: HashMap::new(),
             config_window: None,
             help_window: None,
         }
@@ -500,6 +559,84 @@ impl MainWindow {
         }
     }
 
+    fn sync_menu_refresh_listeners(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let sessions = self.sessions.sessions_snapshot();
+        let active_ids: HashSet<SessionId> = sessions.iter().map(|session| session.id).collect();
+        self.menu_refresh_listeners
+            .retain(|session_id, _| active_ids.contains(session_id));
+
+        for session in &sessions {
+            self.ensure_menu_refresh_listener(session, window, cx);
+        }
+    }
+
+    fn ensure_menu_refresh_listener(
+        &mut self,
+        session: &VideoSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.menu_refresh_listeners.contains_key(&session.id) {
+            return;
+        }
+
+        let handle = session.detection.clone();
+        let main_handle = cx.entity().downgrade();
+        let (notify_tx, mut notify_rx) = unbounded::<()>();
+
+        let ui_task = window.spawn(cx, async move |cx| {
+            while notify_rx.next().await.is_some() {
+                let Some(main_window) = main_handle.upgrade() else {
+                    break;
+                };
+                let _ = main_window.update(cx, |this, cx| {
+                    this.refresh_app_menus(cx);
+                });
+            }
+        });
+
+        let (stop_tx, mut stop_rx) = oneshot::channel();
+        let tokio_task = runtime::spawn(async move {
+            let mut state_rx = handle.subscribe_state();
+            let mut progress_rx = handle.subscribe_progress();
+            let mut last_state = *state_rx.borrow();
+            let mut last_completed = progress_rx.borrow().completed;
+
+            loop {
+                tokio::select! {
+                    _ = &mut stop_rx => break,
+                    changed = state_rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        let next_state = *state_rx.borrow();
+                        if next_state != last_state {
+                            last_state = next_state;
+                            let _ = notify_tx.unbounded_send(());
+                        }
+                    }
+                    changed = progress_rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        let completed = progress_rx.borrow().completed;
+                        if completed != last_completed {
+                            last_completed = completed;
+                            let _ = notify_tx.unbounded_send(());
+                        }
+                    }
+                }
+            }
+        });
+
+        if tokio_task.is_none() {
+            eprintln!("menu refresh listener failed: tokio runtime not initialized");
+        }
+
+        self.menu_refresh_listeners
+            .insert(session.id, MenuRefreshListener::new(ui_task, stop_tx));
+    }
+
     fn open_confirm_dialog(&mut self, config: ConfirmDialogConfig, cx: &mut Context<Self>) {
         let dialog = self.confirm_dialog.clone();
         let _ = dialog.update(cx, |dialog, cx| {
@@ -646,6 +783,32 @@ impl MainWindow {
             },
             cx,
         );
+    }
+
+    pub(crate) fn toggle_active_session_state(&mut self, cx: &mut Context<Self>) {
+        let Some(session_id) = self.active_session else {
+            return;
+        };
+        self.toggle_session_state(session_id, cx);
+    }
+
+    pub(crate) fn toggle_session_state(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+        let Some(session) = self.sessions.session(session_id) else {
+            return;
+        };
+        let progress = session.detection.progress_snapshot();
+        if progress.completed {
+            return;
+        }
+        match session.detection.run_state() {
+            DetectionRunState::Idle => {
+                session.detection.start();
+            }
+            DetectionRunState::Running | DetectionRunState::Paused => {
+                session.detection.toggle_pause();
+            }
+        }
+        self.refresh_app_menus(cx);
     }
 
     fn save_active_session_state(&mut self, cx: &App) {
@@ -844,6 +1007,19 @@ impl Render for MainWindow {
             self.replay_dismissed = false;
         }
         self.set_replay_visible(ended && !self.replay_dismissed, cx);
+        if cfg!(target_os = "macos") {
+            self.sync_menu_refresh_listeners(window, cx);
+        }
+
+        let titlebar_children: Vec<AnyElement> = self
+            .titlebar_actions
+            .clone()
+            .into_iter()
+            .map(|actions| actions.into_any_element())
+            .collect();
+        let _ = self.titlebar.update(cx, move |titlebar, _| {
+            titlebar.set_children(titlebar_children);
+        });
 
         div()
             .relative()
@@ -874,12 +1050,7 @@ impl Render for MainWindow {
                         .px(px(12.0))
                         .border_b(px(SIDEBAR_BORDER_WIDTH))
                         .border_color(rgb(SIDEBAR_BORDER_COLOR))
-                        .justify_between();
-
-                    let mut menu_cluster = div().flex().items_center().gap(px(8.0));
-                    if let Some(menu_bar) = self.menu_bar.clone() {
-                        menu_cluster = menu_cluster.child(menu_bar);
-                    }
+                        .justify_end();
 
                     let settings_button = div()
                         .flex()
@@ -904,7 +1075,7 @@ impl Render for MainWindow {
                             }),
                         );
 
-                    settings_bar = settings_bar.child(menu_cluster).child(settings_button);
+                    settings_bar = settings_bar.child(settings_button);
                 }
 
                 settings_bar

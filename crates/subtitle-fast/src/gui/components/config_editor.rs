@@ -126,12 +126,12 @@ impl ConfigWindow {
     }
 
     pub fn open(cx: &mut App) -> gpui::WindowHandle<Self> {
-        let bounds = Bounds::centered(None, size(px(820.0), px(560.0)), cx);
+        let bounds = Bounds::centered(None, size(px(820.0), px(620.0)), cx);
         let handle = cx
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(820.0), px(560.0))),
+                    window_min_size: Some(size(px(820.0), px(620.0))),
                     is_resizable: false,
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some("subtitle-fast settings".into()),

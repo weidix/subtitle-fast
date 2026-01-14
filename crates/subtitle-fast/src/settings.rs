@@ -69,11 +69,15 @@ pub struct EffectiveSettings {
 
 #[derive(Debug)]
 pub struct ResolvedSettings {
+    /// Effective settings resolved from CLI flags and config files.
     pub settings: EffectiveSettings,
+    /// Path to the config file used for resolution, if any.
+    pub config_path: Option<PathBuf>,
 }
 
+/// Resolve settings for the GUI flow using default CLI values.
 #[cfg(feature = "gui")]
-pub(crate) fn resolve_gui_settings() -> Result<EffectiveSettings, ConfigError> {
+pub fn resolve_gui_settings() -> Result<EffectiveSettings, ConfigError> {
     let cli = CliArgs {
         backend: None,
         config: None,
@@ -345,7 +349,10 @@ fn merge(
         output: output_settings,
     };
 
-    Ok(ResolvedSettings { settings })
+    Ok(ResolvedSettings {
+        settings,
+        config_path,
+    })
 }
 
 pub(crate) fn default_config_path() -> Option<PathBuf> {

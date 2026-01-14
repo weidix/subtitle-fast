@@ -16,6 +16,8 @@ use detector::Detector;
 use futures_util::Stream;
 use tokio_stream::wrappers::WatchStream;
 
+#[cfg(feature = "ocr-ort")]
+use crate::model;
 use crate::settings::{DetectionSettings, EffectiveSettings};
 use determiner::{RegionDeterminer, RegionDeterminerError};
 use lifecycle::{RegionLifecycleError, RegionLifecycleTracker};
@@ -24,11 +26,11 @@ use ocr::{OcrStageError, SubtitleOcr};
 use sampler::FrameSampler;
 use sorter::FrameSorter;
 use subtitle_fast_decoder::DynDecoderProvider;
-#[cfg(feature = "ocr-ort")]
-use subtitle_fast_ocr::OrtOcrEngine;
 #[cfg(all(feature = "ocr-vision", target_os = "macos"))]
 use subtitle_fast_ocr::VisionOcrEngine;
 use subtitle_fast_ocr::{NoopOcrEngine, OcrEngine};
+#[cfg(feature = "ocr-ort")]
+use subtitle_fast_ocr::{OcrError, OrtOcrConfig, OrtOcrEngine};
 use subtitle_fast_types::DecoderError;
 use subtitle_fast_validator::subtitle_detection::SubtitleDetectionError;
 
@@ -296,8 +298,7 @@ fn build_ocr_engine_requested(backend: &str) -> Option<Arc<dyn OcrEngine>> {
         "ort" => {
             #[cfg(feature = "ocr-ort")]
             {
-                return OrtOcrEngine::new()
-                    .map(|engine| Arc::new(engine) as Arc<dyn OcrEngine>)
+                return build_ort_engine()
                     .map_err(|err| {
                         eprintln!("ort OCR engine failed to initialize: {err}");
                         err
@@ -323,14 +324,26 @@ fn build_ocr_engine_auto() -> Arc<dyn OcrEngine> {
     }
     #[cfg(feature = "ocr-ort")]
     {
-        match OrtOcrEngine::new() {
-            Ok(engine) => return Arc::new(engine),
+        match build_ort_engine() {
+            Ok(engine) => return engine,
             Err(err) => {
                 eprintln!("ort OCR engine failed to initialize: {err}");
             }
         }
     }
     Arc::new(NoopOcrEngine)
+}
+
+#[cfg(feature = "ocr-ort")]
+fn build_ort_engine() -> Result<Arc<dyn OcrEngine>, OcrError> {
+    let paths = model::ort_model_paths()
+        .map_err(|err| OcrError::backend(format!("failed to resolve ORT model paths: {err}")))?;
+    let config = OrtOcrConfig {
+        model_path: paths.model_path().to_path_buf(),
+        dictionary_path: paths.dictionary_path().to_path_buf(),
+        ..OrtOcrConfig::default()
+    };
+    OrtOcrEngine::with_config(config).map(|engine| Arc::new(engine) as Arc<dyn OcrEngine>)
 }
 
 fn default_output_path(input: &Path) -> PathBuf {

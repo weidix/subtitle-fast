@@ -2,6 +2,7 @@ pub mod color_picker;
 pub mod config_editor;
 pub mod confirm_dialog;
 pub mod detection_sidebar;
+pub mod download_window;
 pub mod help_window;
 pub mod menu_bar;
 pub mod menu_bar_buttons;
@@ -25,6 +26,7 @@ pub use detection_sidebar::{
     DetectedSubtitlesList, DetectionControls, DetectionHandle, DetectionMetrics, DetectionRunState,
     DetectionSidebar, DetectionSidebarHost,
 };
+pub use download_window::DownloadWindow;
 pub use help_window::HelpWindow;
 pub use menu_bar::MenuBar;
 pub use sidebar::{

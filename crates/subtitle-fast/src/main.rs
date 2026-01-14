@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", feature = "gui"),
+    windows_subsystem = "windows"
+)]
+
 use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::num::NonZeroUsize;

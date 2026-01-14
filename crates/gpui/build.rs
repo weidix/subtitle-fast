@@ -199,8 +199,19 @@ mod macos {
         let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
         let metallib_output_path =
             PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
+        let module_cache_path =
+            PathBuf::from(env::var("OUT_DIR").unwrap()).join("clang-module-cache");
         println!("cargo:rerun-if-changed={}", shader_path);
 
+        if let Err(err) = std::fs::create_dir_all(&module_cache_path) {
+            println!(
+                "cargo::warning=failed to create clang module cache dir {}: {}",
+                module_cache_path.display(),
+                err
+            );
+        }
+
+        let module_cache_arg = format!("-fmodules-cache-path={}", module_cache_path.display());
         let output = Command::new("xcrun")
             .args([
                 "-sdk",
@@ -209,6 +220,9 @@ mod macos {
                 "-gline-tables-only",
                 "-mmacosx-version-min=10.15.7",
                 "-MO",
+            ])
+            .arg(&module_cache_arg)
+            .args([
                 "-c",
                 shader_path,
                 "-include",
@@ -216,6 +230,7 @@ mod macos {
                 "-o",
             ])
             .arg(&air_output_path)
+            .env("CLANG_MODULE_CACHE_PATH", &module_cache_path)
             .output()
             .unwrap();
 
@@ -232,6 +247,7 @@ mod macos {
             .arg(air_output_path)
             .arg("-o")
             .arg(metallib_output_path)
+            .env("CLANG_MODULE_CACHE_PATH", &module_cache_path)
             .output()
             .unwrap();
 

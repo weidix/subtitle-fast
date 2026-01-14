@@ -519,6 +519,15 @@ impl MainWindow {
         detection_handle.set_luma_handle(Some(self.luma_handle.clone()));
         detection_handle.set_roi_handle(Some(self.roi_handle.clone()));
         let session_id = self.sessions.add_session(path, detection_handle);
+        if let Ok(settings) = crate::settings::resolve_gui_settings() {
+            self.sessions.update_settings(
+                session_id,
+                Some(settings.detection.target),
+                Some(settings.detection.delta),
+                None,
+                settings.detection.roi,
+            );
+        }
 
         if select_new || self.active_session.is_none() {
             self.activate_session(session_id, cx);

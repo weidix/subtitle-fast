@@ -107,7 +107,7 @@ impl ConfigWindow {
         let mut window = Self {
             fields,
             scroll_handle: ScrollHandle::new(),
-            config_path: settings::default_config_path(),
+            config_path: settings::resolve_gui_config_path(),
             output_path: None,
             status: None,
             field_errors: FieldErrors::default(),
@@ -155,8 +155,8 @@ impl ConfigWindow {
         let autosave_enabled = self.autosave_enabled;
         self.autosave_enabled = false;
 
-        let Some(path) = settings::default_config_path() else {
-            self.set_status("Config directory unavailable", true, cx);
+        let Some(path) = settings::resolve_gui_config_path() else {
+            self.set_status("Config path unavailable", true, cx);
             self.autosave_enabled = autosave_enabled;
             return;
         };

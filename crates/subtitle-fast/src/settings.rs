@@ -343,6 +343,16 @@ pub(crate) fn default_config_path() -> Option<PathBuf> {
 }
 
 #[cfg(feature = "gui")]
+pub(crate) fn resolve_gui_config_path() -> Option<PathBuf> {
+    if let Some(path) = project_config_path()
+        && path.exists()
+    {
+        return Some(path);
+    }
+    default_config_path()
+}
+
+#[cfg(feature = "gui")]
 pub(crate) fn load_file_config(path: &Path) -> Result<FileConfig, ConfigError> {
     let contents = fs::read_to_string(path).map_err(|source| ConfigError::Io {
         path: path.to_path_buf(),

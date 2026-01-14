@@ -226,7 +226,7 @@ impl DetectionPipelineInner {
             return self.run_state();
         }
 
-        let settings = match crate::settings::resolve_gui_settings() {
+        let mut settings = match crate::settings::resolve_gui_settings() {
             Ok(settings) => settings,
             Err(err) => {
                 eprintln!("failed to load config settings: {err}");
@@ -241,6 +241,10 @@ impl DetectionPipelineInner {
                 }
             }
         };
+        let (target, delta, roi) = self.current_detection_overrides();
+        settings.detection.target = target;
+        settings.detection.delta = delta;
+        settings.detection.roi = Some(roi);
         let plan = match build_detection_plan(&path, &settings) {
             Ok(plan) => plan,
             Err(err) => {
@@ -376,6 +380,17 @@ impl DetectionPipelineInner {
     }
 
     fn current_detection_settings(&self) -> DetectionSettings {
+        let (target, delta, roi) = self.current_detection_overrides();
+        DetectionSettings {
+            samples_per_second: DEFAULT_SAMPLES_PER_SECOND,
+            target,
+            delta,
+            comparator: None,
+            roi: Some(roi),
+        }
+    }
+
+    fn current_detection_overrides(&self) -> (u8, u8, RoiConfig) {
         let luma_handle = self
             .luma_handle
             .lock()
@@ -398,13 +413,7 @@ impl DetectionPipelineInner {
             .map(|handle| handle.latest())
             .unwrap_or_else(full_frame_roi);
 
-        DetectionSettings {
-            samples_per_second: DEFAULT_SAMPLES_PER_SECOND,
-            target,
-            delta,
-            comparator: None,
-            roi: Some(roi),
-        }
+        (target, delta, roi)
     }
 
     fn subscribe_subtitles(&self) -> UnboundedReceiver<SubtitleMessage> {

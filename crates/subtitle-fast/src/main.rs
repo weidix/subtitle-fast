@@ -56,6 +56,12 @@ fn run_gui() -> Result<(), DecoderError> {
         runtime::init(tokio::runtime::Handle::current());
         bind_text_input_keys(cx);
         menus::register_actions(cx);
+        #[cfg(target_os = "macos")]
+        cx.bind_keys([gpui::KeyBinding::new(
+            "cmd-q",
+            subtitle_fast::gui::menus::Quit,
+            None,
+        )]);
         if cfg!(target_os = "macos") {
             menus::set_macos_menus(cx, &[]);
         } else {

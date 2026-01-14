@@ -72,6 +72,7 @@ pub struct ResolvedSettings {
     pub settings: EffectiveSettings,
 }
 
+#[cfg(feature = "gui")]
 pub(crate) fn resolve_gui_settings() -> Result<EffectiveSettings, ConfigError> {
     let cli = CliArgs {
         backend: None,
@@ -341,6 +342,7 @@ pub(crate) fn default_config_path() -> Option<PathBuf> {
         .map(|dirs| dirs.config_dir().join("config.toml"))
 }
 
+#[cfg(feature = "gui")]
 pub(crate) fn load_file_config(path: &Path) -> Result<FileConfig, ConfigError> {
     let contents = fs::read_to_string(path).map_err(|source| ConfigError::Io {
         path: path.to_path_buf(),

@@ -116,11 +116,9 @@ impl DetectionMetrics {
                         if running
                             && !completed
                             && Instant::now().duration_since(last_progress_change_at) >= METRICS_THROTTLE
-                        {
-                            if notify_tx.unbounded_send(()).is_err() {
+                            && notify_tx.unbounded_send(()).is_err() {
                                 break;
                             }
-                        }
                     }
                 }
             }
@@ -156,17 +154,10 @@ impl DetectionMetrics {
         }
     }
 
-    fn metric_row(
-        &self,
-        id: &'static str,
-        icon: Icon,
-        label: &'static str,
-        value: String,
-        label_color: Hsla,
-        value_color: Hsla,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let icon_view = icon_sm(icon, label_color).w(px(12.0)).h(px(12.0));
+    fn metric_row(&self, config: MetricRowConfig, cx: &Context<Self>) -> impl IntoElement {
+        let icon_view = icon_sm(config.icon, config.label_color)
+            .w(px(12.0))
+            .h(px(12.0));
 
         let left = div()
             .flex()
@@ -174,10 +165,10 @@ impl DetectionMetrics {
             .gap(px(6.0))
             .min_w(px(0.0))
             .child(icon_view)
-            .child(label);
+            .child(config.label);
 
         div()
-            .id((id, cx.entity_id()))
+            .id((config.id, cx.entity_id()))
             .flex()
             .items_center()
             .justify_between()
@@ -185,16 +176,25 @@ impl DetectionMetrics {
             .w_full()
             .min_w(px(0.0))
             .text_size(px(10.0))
-            .text_color(label_color)
+            .text_color(config.label_color)
             .child(left)
             .child(
                 div()
                     .flex_none()
-                    .text_color(value_color)
+                    .text_color(config.value_color)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(value),
+                    .child(config.value),
             )
     }
+}
+
+struct MetricRowConfig {
+    id: &'static str,
+    icon: Icon,
+    label: &'static str,
+    value: String,
+    label_color: Hsla,
+    value_color: Hsla,
 }
 
 impl Render for DetectionMetrics {
@@ -235,75 +235,91 @@ impl Render for DetectionMetrics {
             .flex_col()
             .gap(px(6.0))
             .child(self.metric_row(
-                "detection-metric-frames",
-                Icon::Frame,
-                "Frames",
-                self.format_frames(),
-                label_color,
-                value_color,
+                MetricRowConfig {
+                    id: "detection-metric-frames",
+                    icon: Icon::Frame,
+                    label: "Frames",
+                    value: self.format_frames(),
+                    label_color,
+                    value_color,
+                },
                 cx,
             ))
             .child(self.metric_row(
-                "detection-metric-fps",
-                Icon::Activity,
-                "FPS",
-                Self::format_rate(self.progress.fps, "fps"),
-                label_color,
-                value_color,
+                MetricRowConfig {
+                    id: "detection-metric-fps",
+                    icon: Icon::Activity,
+                    label: "FPS",
+                    value: Self::format_rate(self.progress.fps, "fps"),
+                    label_color,
+                    value_color,
+                },
                 cx,
             ))
             .child(self.metric_row(
-                "detection-metric-detect",
-                Icon::Scan,
-                "Detect",
-                Self::format_rate(self.progress.det_ms, "ms"),
-                label_color,
-                value_color,
+                MetricRowConfig {
+                    id: "detection-metric-detect",
+                    icon: Icon::Scan,
+                    label: "Detect",
+                    value: Self::format_rate(self.progress.det_ms, "ms"),
+                    label_color,
+                    value_color,
+                },
                 cx,
             ))
             .child(self.metric_row(
-                "detection-metric-seg",
-                Icon::Crosshair,
-                "Region",
-                Self::format_rate(self.progress.seg_ms, "ms"),
-                label_color,
-                value_color,
+                MetricRowConfig {
+                    id: "detection-metric-seg",
+                    icon: Icon::Crosshair,
+                    label: "Region",
+                    value: Self::format_rate(self.progress.seg_ms, "ms"),
+                    label_color,
+                    value_color,
+                },
                 cx,
             ))
             .child(self.metric_row(
-                "detection-metric-ocr",
-                Icon::Sparkles,
-                "OCR",
-                Self::format_rate(self.progress.ocr_ms, "ms"),
-                label_color,
-                value_color,
+                MetricRowConfig {
+                    id: "detection-metric-ocr",
+                    icon: Icon::Sparkles,
+                    label: "OCR",
+                    value: Self::format_rate(self.progress.ocr_ms, "ms"),
+                    label_color,
+                    value_color,
+                },
                 cx,
             ))
             .child(self.metric_row(
-                "detection-metric-cues",
-                Icon::MessageSquare,
-                "Cues",
-                self.progress.cues.to_string(),
-                label_color,
-                value_color,
+                MetricRowConfig {
+                    id: "detection-metric-cues",
+                    icon: Icon::MessageSquare,
+                    label: "Cues",
+                    value: self.progress.cues.to_string(),
+                    label_color,
+                    value_color,
+                },
                 cx,
             ))
             .child(self.metric_row(
-                "detection-metric-merged",
-                Icon::Merge,
-                "Merged",
-                self.progress.merged.to_string(),
-                label_color,
-                value_color,
+                MetricRowConfig {
+                    id: "detection-metric-merged",
+                    icon: Icon::Merge,
+                    label: "Merged",
+                    value: self.progress.merged.to_string(),
+                    label_color,
+                    value_color,
+                },
                 cx,
             ))
             .child(self.metric_row(
-                "detection-metric-empty-ocr",
-                Icon::ScanText,
-                "Empty OCR",
-                self.progress.ocr_empty.to_string(),
-                label_color,
-                value_color,
+                MetricRowConfig {
+                    id: "detection-metric-empty-ocr",
+                    icon: Icon::ScanText,
+                    label: "Empty OCR",
+                    value: self.progress.ocr_empty.to_string(),
+                    label_color,
+                    value_color,
+                },
                 cx,
             ));
 

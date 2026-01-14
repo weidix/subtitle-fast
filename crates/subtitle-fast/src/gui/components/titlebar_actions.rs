@@ -5,12 +5,12 @@ use gpui::{App, Context, MouseButton, Render, Window, div, hsla, px};
 
 use crate::gui::icons::{Icon, icon_sm};
 
-const BUTTON_WIDTH: f32 = 28.0;
+type TitlebarActionCallback = Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct TitlebarActionsCallbacks {
-    pub on_settings: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
-    pub on_help: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+    pub on_settings: TitlebarActionCallback,
+    pub on_help: TitlebarActionCallback,
 }
 
 pub struct TitlebarActions {
@@ -35,18 +35,25 @@ impl Render for TitlebarActions {
 
         let settings = {
             let on_settings = self.callbacks.on_settings.clone();
-            div()
+            let mut button = div()
                 .flex()
                 .items_center()
                 .justify_center()
-                .w(px(BUTTON_WIDTH))
                 .h_full()
+                .map(|mut view| {
+                    view.style().aspect_ratio = Some(1.0);
+                    view
+                })
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover_bg))
                 .child(icon_sm(Icon::SlidersHorizontal, icon_color))
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     (on_settings)(window, cx);
-                })
+                });
+            if cfg!(target_os = "macos") {
+                button = button.ml(px(8.0));
+            }
+            button
         };
 
         let help = {
@@ -55,8 +62,13 @@ impl Render for TitlebarActions {
                 .flex()
                 .items_center()
                 .justify_center()
-                .w(px(BUTTON_WIDTH))
                 .h_full()
+                .map(|mut view| {
+                    view.style().aspect_ratio = Some(1.0);
+                    view
+                })
+                .rounded_tr(px(6.0))
+                .rounded_br(px(6.0))
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover_bg))
                 .child(icon_sm(Icon::Info, icon_color))
@@ -68,7 +80,8 @@ impl Render for TitlebarActions {
         div()
             .flex()
             .items_center()
-            .gap(px(6.0))
+            .h_full()
+            .gap(px(0.0))
             .child(settings)
             .child(help)
     }

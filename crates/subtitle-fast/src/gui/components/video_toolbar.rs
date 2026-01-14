@@ -53,6 +53,12 @@ pub struct VideoToolbar {
     validator_overlay_visible: bool,
 }
 
+impl Default for VideoToolbar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VideoToolbar {
     pub fn new() -> Self {
         Self {
@@ -99,7 +105,7 @@ impl VideoToolbar {
         self.sync_frame_preprocessor();
         if let Some(color_picker) = self.color_picker.clone() {
             let enabled = self.controls.is_some();
-            let _ = color_picker.update(cx, |picker, cx| {
+            color_picker.update(cx, |picker, cx| {
                 picker.set_enabled(enabled, cx);
             });
         }
@@ -117,7 +123,7 @@ impl VideoToolbar {
                 this.handle_roi_update(cx);
             }));
             let visible = self.roi_visible;
-            let _ = roi_overlay.update(cx, |overlay, cx| {
+            roi_overlay.update(cx, |overlay, cx| {
                 overlay.set_visible(visible, cx);
             });
         }
@@ -153,7 +159,7 @@ impl VideoToolbar {
                 this.handle_color_update(cx);
             }));
             let enabled = self.controls.is_some();
-            let _ = color_picker.update(cx, |picker, cx| {
+            color_picker.update(cx, |picker, cx| {
                 picker.set_enabled(enabled, cx);
             });
         }
@@ -181,28 +187,28 @@ impl VideoToolbar {
             return;
         };
         let overlay_enabled = self.highlight_visible || self.validator_overlay_visible;
-        if overlay_enabled {
-            if let (Some(luma_handle), Some(color_handle), Some(roi_handle)) = (
+        if overlay_enabled
+            && let (Some(luma_handle), Some(color_handle), Some(roi_handle)) = (
                 self.luma_handle.clone(),
                 self.color_handle.clone(),
                 self.roi_handle.clone(),
-            ) {
-                let grayscale = self.view == VideoViewMode::Y;
-                controls.set_preprocessor(
-                    VIEW_PREPROCESSOR_KEY,
-                    frame_overlay_preprocessor(
-                        luma_handle,
-                        color_handle,
-                        roi_handle,
-                        OverlayOptions {
-                            highlight: self.highlight_visible,
-                            validator: self.validator_overlay_visible,
-                            grayscale,
-                        },
-                    ),
-                );
-                return;
-            }
+            )
+        {
+            let grayscale = self.view == VideoViewMode::Y;
+            controls.set_preprocessor(
+                VIEW_PREPROCESSOR_KEY,
+                frame_overlay_preprocessor(
+                    luma_handle,
+                    color_handle,
+                    roi_handle,
+                    OverlayOptions {
+                        highlight: self.highlight_visible,
+                        validator: self.validator_overlay_visible,
+                        grayscale,
+                    },
+                ),
+            );
+            return;
         }
 
         match self.view {
@@ -219,7 +225,7 @@ impl VideoToolbar {
         }
         self.roi_visible = visible;
         if let Some(roi_overlay) = self.roi_overlay.clone() {
-            let _ = roi_overlay.update(cx, |overlay, cx| {
+            roi_overlay.update(cx, |overlay, cx| {
                 overlay.set_visible(visible, cx);
             });
         }
@@ -330,7 +336,7 @@ impl Render for VideoToolbar {
                     .flex()
                     .items_center()
                     .gap(px(4.0))
-                    .child(icon_sm(Icon::Sun, info_text.into()).w(px(10.0)).h(px(10.0)))
+                    .child(icon_sm(Icon::Sun, info_text).w(px(10.0)).h(px(10.0)))
                     .child(format!("Y: {luma_target}  Tol: {luma_delta}")),
             )
             .child(
@@ -338,11 +344,7 @@ impl Render for VideoToolbar {
                     .flex()
                     .items_center()
                     .gap(px(4.0))
-                    .child(
-                        icon_sm(Icon::Crosshair, info_text.into())
-                            .w(px(10.0))
-                            .h(px(10.0)),
-                    )
+                    .child(icon_sm(Icon::Crosshair, info_text).w(px(10.0)).h(px(10.0)))
                     .child(roi_text),
             );
 
@@ -492,17 +494,15 @@ impl Render for VideoToolbar {
                     .h(px(12.0)),
                 );
 
-            if enabled {
-                if let Some(roi_overlay) = self.roi_overlay.clone() {
-                    view = view
-                        .cursor_pointer()
-                        .hover(|style| style.bg(hover_bg))
-                        .on_click(cx.listener(move |_, _event, _window, cx| {
-                            let _ = roi_overlay.update(cx, |overlay, cx| {
-                                overlay.reset_roi(cx);
-                            });
-                        }));
-                }
+            if enabled && let Some(roi_overlay) = self.roi_overlay.clone() {
+                view = view
+                    .cursor_pointer()
+                    .hover(|style| style.bg(hover_bg))
+                    .on_click(cx.listener(move |_, _event, _window, cx| {
+                        roi_overlay.update(cx, |overlay, cx| {
+                            overlay.reset_roi(cx);
+                        });
+                    }));
             }
 
             view
@@ -662,6 +662,13 @@ struct RoiBounds {
     bottom: usize,
 }
 
+#[derive(Clone, Copy)]
+struct LumaTargets {
+    y: u8,
+    u: u8,
+    v: u8,
+}
+
 struct ValidatorOverlayState {
     detector: Option<Box<dyn SubtitleDetector>>,
     dims: Option<(usize, usize, usize)>,
@@ -722,9 +729,7 @@ impl ValidatorOverlayState {
             }
         }
 
-        let Some(detector) = self.detector.as_ref() else {
-            return None;
-        };
+        let detector = self.detector.as_ref()?;
         match detector.detect(frame) {
             Ok(result) => Some(result),
             Err(err) => {
@@ -791,23 +796,25 @@ fn frame_overlay_preprocessor(
             uv_plane.fill(128);
         }
 
+        let targets = LumaTargets {
+            y: target_y,
+            u: target_u,
+            v: target_v,
+        };
+
         if options.highlight {
             let target_min = values.target.saturating_sub(values.delta);
             let target_max = values.target.saturating_add(values.delta);
             apply_luma_highlight(
-                y_plane, uv_plane, info, roi_bounds, target_min, target_max, target_y, target_u,
-                target_v,
+                y_plane, uv_plane, info, roi_bounds, target_min, target_max, targets,
             );
         }
 
-        if let Some(result) = detection {
-            if let Some(bounds) = detection_bounds(&result, width, height) {
-                if let Some(bounds) = clamp_bounds_to_roi(bounds, roi_bounds) {
-                    draw_nv12_rect_outline(
-                        y_plane, uv_plane, info, bounds, roi_bounds, target_y, target_u, target_v,
-                    );
-                }
-            }
+        if let Some(result) = detection
+            && let Some(bounds) = detection_bounds(&result, width, height)
+            && let Some(bounds) = clamp_bounds_to_roi(bounds, roi_bounds)
+        {
+            draw_nv12_rect_outline(y_plane, uv_plane, info, bounds, roi_bounds, targets);
         }
 
         true
@@ -904,14 +911,12 @@ fn apply_luma_highlight(
     roi: RoiBounds,
     target_min: u8,
     target_max: u8,
-    target_y: u8,
-    target_u: u8,
-    target_v: u8,
+    targets: LumaTargets,
 ) {
     let width = info.width as usize;
     let height = info.height as usize;
-    let blocks_w = (width + 1) / 2;
-    let blocks_h = (height + 1) / 2;
+    let blocks_w = width.div_ceil(2);
+    let blocks_h = height.div_ceil(2);
 
     for by in 0..blocks_h {
         let y0 = by * 2;
@@ -938,7 +943,7 @@ fn apply_luma_highlight(
                 if idx < y_plane.len() {
                     let value = y_plane[idx];
                     if value >= target_min && value <= target_max {
-                        y_plane[idx] = target_y;
+                        y_plane[idx] = targets.y;
                         hit = true;
                     }
                 }
@@ -948,7 +953,7 @@ fn apply_luma_highlight(
                 if idx < y_plane.len() {
                     let value = y_plane[idx];
                     if value >= target_min && value <= target_max {
-                        y_plane[idx] = target_y;
+                        y_plane[idx] = targets.y;
                         hit = true;
                     }
                 }
@@ -958,7 +963,7 @@ fn apply_luma_highlight(
                 if idx < y_plane.len() {
                     let value = y_plane[idx];
                     if value >= target_min && value <= target_max {
-                        y_plane[idx] = target_y;
+                        y_plane[idx] = targets.y;
                         hit = true;
                     }
                 }
@@ -968,7 +973,7 @@ fn apply_luma_highlight(
                 if idx < y_plane.len() {
                     let value = y_plane[idx];
                     if value >= target_min && value <= target_max {
-                        y_plane[idx] = target_y;
+                        y_plane[idx] = targets.y;
                         hit = true;
                     }
                 }
@@ -977,8 +982,8 @@ fn apply_luma_highlight(
             if hit {
                 let uv_index = uv_row + bx * 2;
                 if uv_index + 1 < uv_plane.len() {
-                    uv_plane[uv_index] = target_u;
-                    uv_plane[uv_index + 1] = target_v;
+                    uv_plane[uv_index] = targets.u;
+                    uv_plane[uv_index + 1] = targets.v;
                 }
             }
         }
@@ -991,9 +996,7 @@ fn draw_nv12_rect_outline(
     info: Nv12FrameInfo,
     bounds: RoiBounds,
     roi: RoiBounds,
-    target_y: u8,
-    target_u: u8,
-    target_v: u8,
+    targets: LumaTargets,
 ) {
     let width = info.width as usize;
     let height = info.height as usize;
@@ -1012,8 +1015,8 @@ fn draw_nv12_rect_outline(
     let right_start = right.saturating_sub(thickness).max(left);
 
     let mut draw_stripe = |x_start: usize, x_end: usize, y_start: usize, y_end: usize| {
-        let blocks_w = (width + 1) / 2;
-        let blocks_h = (height + 1) / 2;
+        let blocks_w = width.div_ceil(2);
+        let blocks_h = height.div_ceil(2);
         for by in 0..blocks_h {
             let y0 = by * 2;
             if y0 >= height {
@@ -1058,15 +1061,15 @@ fn draw_nv12_rect_outline(
                     {
                         let idx = row + x;
                         if idx < y_plane.len() {
-                            y_plane[idx] = target_y;
+                            y_plane[idx] = targets.y;
                         }
                     }
                 }
 
                 let uv_index = uv_row + bx * 2;
                 if uv_index + 1 < uv_plane.len() {
-                    uv_plane[uv_index] = target_u;
-                    uv_plane[uv_index + 1] = target_v;
+                    uv_plane[uv_index] = targets.u;
+                    uv_plane[uv_index + 1] = targets.v;
                 }
             }
         }

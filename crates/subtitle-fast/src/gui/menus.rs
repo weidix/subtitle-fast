@@ -50,10 +50,10 @@ fn defer_main_window_action(
 }
 
 fn active_main_window(cx: &mut App) -> Option<WindowHandle<MainWindow>> {
-    if let Some(global) = cx.try_global::<MainWindowState>() {
-        if let Some(handle) = global.handle.downcast::<MainWindow>() {
-            return Some(handle);
-        }
+    if let Some(global) = cx.try_global::<MainWindowState>()
+        && let Some(handle) = global.handle.downcast::<MainWindow>()
+    {
+        return Some(handle);
     }
 
     cx.active_window()
@@ -204,7 +204,7 @@ fn build_menus(
 
     vec![
         Menu {
-            name: app_menu_title.into(),
+            name: app_menu_title,
             icon: None,
             items: app_items,
         },

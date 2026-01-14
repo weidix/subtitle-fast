@@ -15,9 +15,10 @@ use crate::gui::components::{
     ConfirmDialogButtonStyle, ConfirmDialogConfig, ConfirmDialogTitle, DetectedSubtitlesList,
     DetectionControls, DetectionHandle, DetectionMetrics, DetectionRunState, DetectionSidebar,
     DetectionSidebarHost, DragRange, DraggableEdge, FramePreprocessor, HelpWindow, Nv12FrameInfo,
-    Sidebar, SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar, TitlebarActions,
-    TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle, VideoPlayer,
-    VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay, VideoToolbar,
+    Sidebar, SidebarConfig, SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar,
+    TitlebarActions, TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle,
+    VideoPlayer, VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay,
+    VideoToolbar,
 };
 use crate::gui::icons::{Icon, icon_md, icon_sm};
 use crate::gui::menus;
@@ -93,26 +94,30 @@ impl SubtitleFastApp {
                         )
                     });
                     let (left_panel, left_panel_handle) = Sidebar::create(
-                        DraggableEdge::Right,
-                        DragRange::new(px(200.0), px(480.0)),
-                        CollapseDirection::Left,
-                        px(0.0),
-                        Duration::from_millis(160),
-                        px(SIDEBAR_DRAG_HIT_THICKNESS),
+                        SidebarConfig {
+                            edge: DraggableEdge::Right,
+                            range: DragRange::new(px(200.0), px(480.0)),
+                            collapse_direction: CollapseDirection::Left,
+                            collapsed_width: px(0.0),
+                            collapse_duration: Duration::from_millis(160),
+                            drag_hit_thickness: px(SIDEBAR_DRAG_HIT_THICKNESS),
+                        },
                         {
                             let task_sidebar_view = task_sidebar_view.clone();
                             move || task_sidebar_content(task_sidebar_view.clone())
                         },
                         cx,
                     );
-                    let detection_sidebar_host = cx.new(|cx| DetectionSidebarHost::new(cx));
+                    let detection_sidebar_host = cx.new(DetectionSidebarHost::new);
                     let (right_panel, _) = Sidebar::create(
-                        DraggableEdge::Left,
-                        DragRange::new(px(240.0), px(520.0)),
-                        CollapseDirection::Right,
-                        px(0.0),
-                        Duration::from_millis(160),
-                        px(SIDEBAR_DRAG_HIT_THICKNESS),
+                        SidebarConfig {
+                            edge: DraggableEdge::Left,
+                            range: DragRange::new(px(240.0), px(520.0)),
+                            collapse_direction: CollapseDirection::Right,
+                            collapsed_width: px(0.0),
+                            collapse_duration: Duration::from_millis(160),
+                            drag_hit_thickness: px(SIDEBAR_DRAG_HIT_THICKNESS),
+                        },
                         {
                             let detection_sidebar_host = detection_sidebar_host.clone();
                             move || detection_sidebar_content(detection_sidebar_host.clone())
@@ -135,7 +140,7 @@ impl SubtitleFastApp {
                     let titlebar_actions_view = titlebar_actions.clone();
                     let (roi_overlay, roi_handle) = VideoRoiOverlay::new();
                     let roi_overlay_view = cx.new(|_| roi_overlay);
-                    let _ = toolbar_view.update(cx, |toolbar_view, cx| {
+                    toolbar_view.update(cx, |toolbar_view, cx| {
                         toolbar_view.set_luma_controls(
                             Some(luma_handle.clone()),
                             Some(luma_controls_view.clone()),
@@ -150,7 +155,7 @@ impl SubtitleFastApp {
                         );
                         cx.notify();
                     });
-                    let _ = roi_overlay_view.update(cx, |overlay, cx| {
+                    roi_overlay_view.update(cx, |overlay, cx| {
                         overlay.set_color_picker(
                             Some(color_picker_view.clone()),
                             Some(color_picker_handle.clone()),
@@ -158,38 +163,38 @@ impl SubtitleFastApp {
                         );
                     });
                     let main_window = cx.new(|_| {
-                        MainWindow::new(
-                            None,
-                            titlebar_for_window,
+                        MainWindow::new(MainWindowParts {
+                            player: None,
+                            titlebar: titlebar_for_window,
                             left_panel,
                             left_panel_handle,
                             right_panel,
-                            sessions.clone(),
-                            task_sidebar_view.clone(),
-                            detection_sidebar_host.clone(),
-                            luma_handle.clone(),
+                            sessions: sessions.clone(),
+                            task_sidebar: task_sidebar_view.clone(),
+                            detection_sidebar_host: detection_sidebar_host.clone(),
+                            luma_handle: luma_handle.clone(),
                             toolbar_view,
                             luma_controls_view,
                             controls_view,
-                            roi_overlay_view,
+                            roi_overlay: roi_overlay_view,
                             roi_handle,
-                            confirm_dialog_view.clone(),
+                            confirm_dialog: confirm_dialog_view.clone(),
                             titlebar_actions,
-                        )
+                        })
                     });
                     let weak_main = main_window.downgrade();
                     let add_handle = weak_main.clone();
                     let select_handle = weak_main.clone();
                     let cancel_handle = weak_main.clone();
                     let remove_handle = weak_main.clone();
-                    let _ = task_sidebar_view.update(cx, |sidebar, cx| {
+                    task_sidebar_view.update(cx, |sidebar, cx| {
                         sidebar.set_callbacks(
                             TaskSidebarCallbacks {
                                 on_add: Arc::new(move |window, cx| {
                                     let Some(main_window) = add_handle.upgrade() else {
                                         return;
                                     };
-                                    let _ = main_window.update(cx, |this, cx| {
+                                    main_window.update(cx, |this, cx| {
                                         this.prompt_for_video(window, false, cx);
                                     });
                                 }),
@@ -197,7 +202,7 @@ impl SubtitleFastApp {
                                     let Some(main_window) = select_handle.upgrade() else {
                                         return;
                                     };
-                                    let _ = main_window.update(cx, |this, cx| {
+                                    main_window.update(cx, |this, cx| {
                                         this.activate_session(session_id, cx);
                                     });
                                 }),
@@ -205,7 +210,7 @@ impl SubtitleFastApp {
                                     let Some(main_window) = cancel_handle.upgrade() else {
                                         return;
                                     };
-                                    let _ = main_window.update(cx, |this, cx| {
+                                    main_window.update(cx, |this, cx| {
                                         this.request_cancel_session(session_id, cx);
                                     });
                                 }),
@@ -213,7 +218,7 @@ impl SubtitleFastApp {
                                     let Some(main_window) = remove_handle.upgrade() else {
                                         return;
                                     };
-                                    let _ = main_window.update(cx, |this, cx| {
+                                    main_window.update(cx, |this, cx| {
                                         this.request_remove_session(session_id, cx);
                                     });
                                 }),
@@ -231,7 +236,7 @@ impl SubtitleFastApp {
                                         let Some(main_window) = settings_handle.upgrade() else {
                                             return;
                                         };
-                                        let _ = main_window.update(cx, |this, cx| {
+                                        main_window.update(cx, |this, cx| {
                                             this.open_config_window(window, cx);
                                         });
                                     }),
@@ -239,7 +244,7 @@ impl SubtitleFastApp {
                                         let Some(main_window) = help_handle.upgrade() else {
                                             return;
                                         };
-                                        let _ = main_window.update(cx, |this, cx| {
+                                        main_window.update(cx, |this, cx| {
                                             this.open_help_window(cx);
                                         });
                                     }),
@@ -347,48 +352,50 @@ pub struct MainWindow {
     help_window: Option<WindowHandle<HelpWindow>>,
 }
 
+struct MainWindowParts {
+    player: Option<Entity<VideoPlayer>>,
+    titlebar: Entity<Titlebar>,
+    left_panel: Entity<Sidebar>,
+    left_panel_handle: SidebarHandle,
+    right_panel: Entity<Sidebar>,
+    sessions: SessionHandle,
+    task_sidebar: Entity<TaskSidebar>,
+    detection_sidebar_host: Entity<DetectionSidebarHost>,
+    luma_handle: VideoLumaHandle,
+    toolbar_view: Entity<VideoToolbar>,
+    luma_controls_view: Entity<VideoLumaControls>,
+    controls_view: Entity<VideoControls>,
+    roi_overlay: Entity<VideoRoiOverlay>,
+    roi_handle: VideoRoiHandle,
+    confirm_dialog: Entity<ConfirmDialog>,
+    titlebar_actions: Option<Entity<TitlebarActions>>,
+}
+
 impl MainWindow {
-    fn new(
-        player: Option<Entity<VideoPlayer>>,
-        titlebar: Entity<Titlebar>,
-        left_panel: Entity<Sidebar>,
-        left_panel_handle: SidebarHandle,
-        right_panel: Entity<Sidebar>,
-        sessions: SessionHandle,
-        task_sidebar: Entity<TaskSidebar>,
-        detection_sidebar_host: Entity<DetectionSidebarHost>,
-        luma_handle: VideoLumaHandle,
-        toolbar_view: Entity<VideoToolbar>,
-        luma_controls_view: Entity<VideoLumaControls>,
-        controls_view: Entity<VideoControls>,
-        roi_overlay: Entity<VideoRoiOverlay>,
-        roi_handle: VideoRoiHandle,
-        confirm_dialog: Entity<ConfirmDialog>,
-        titlebar_actions: Option<Entity<TitlebarActions>>,
-    ) -> Self {
+    fn new(parts: MainWindowParts) -> Self {
         Self {
-            player,
+            player: parts.player,
             controls: None,
             video_info: None,
             video_bounds: None,
             replay_visible: false,
             replay_dismissed: false,
-            titlebar,
-            left_panel,
-            _left_panel_handle: left_panel_handle,
-            right_panel,
-            sessions,
+            titlebar: parts.titlebar,
+            left_panel: parts.left_panel,
+            _left_panel_handle: parts.left_panel_handle,
+            right_panel: parts.right_panel,
+            sessions: parts.sessions,
             active_session: None,
-            task_sidebar,
-            detection_sidebar_host,
-            luma_handle,
-            toolbar_view,
-            luma_controls_view,
-            controls_view,
-            roi_overlay,
-            roi_handle,
-            confirm_dialog,
-            titlebar_actions,
+            task_sidebar: parts.task_sidebar,
+            detection_sidebar_host: parts.detection_sidebar_host,
+            luma_handle: parts.luma_handle,
+            toolbar_view: parts.toolbar_view,
+            luma_controls_view: parts.luma_controls_view,
+            controls_view: parts.controls_view,
+            roi_overlay: parts.roi_overlay,
+            roi_handle: parts.roi_handle,
+            confirm_dialog: parts.confirm_dialog,
+            titlebar_actions: parts.titlebar_actions,
             menu_refresh_listeners: HashMap::new(),
             config_window: None,
             help_window: None,
@@ -397,13 +404,12 @@ impl MainWindow {
 
     /// Opens the settings window or focuses it if already open.
     pub(crate) fn open_config_window(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(handle) = self.config_window {
-            if handle
+        if let Some(handle) = self.config_window
+            && handle
                 .update(cx, |_, window, _| window.activate_window())
                 .is_ok()
-            {
-                return;
-            }
+        {
+            return;
         }
 
         let handle = ConfigWindow::open(cx);
@@ -415,13 +421,12 @@ impl MainWindow {
 
     /// Opens the help window or focuses it if already open.
     pub(crate) fn open_help_window(&mut self, cx: &mut Context<Self>) {
-        if let Some(handle) = self.help_window {
-            if handle
+        if let Some(handle) = self.help_window
+            && handle
                 .update(cx, |_, window, _| window.activate_window())
                 .is_ok()
-            {
-                return;
-            }
+        {
+            return;
         }
 
         if let Some(handle) = HelpWindow::open(cx) {
@@ -447,7 +452,7 @@ impl MainWindow {
             allowed_extensions: Some(
                 SUPPORTED_VIDEO_EXTENSIONS
                     .iter()
-                    .map(|ext| SharedString::new_static(*ext))
+                    .map(|ext| SharedString::new_static(ext))
                     .collect(),
             ),
         };
@@ -645,7 +650,7 @@ impl MainWindow {
 
     fn open_confirm_dialog(&mut self, config: ConfirmDialogConfig, cx: &mut Context<Self>) {
         let dialog = self.confirm_dialog.clone();
-        let _ = dialog.update(cx, |dialog, cx| {
+        dialog.update(cx, |dialog, cx| {
             dialog.open(config, cx);
         });
     }
@@ -684,7 +689,7 @@ impl MainWindow {
             true,
             Arc::new(move |_window, cx| {
                 if let Some(main_window) = main_handle.upgrade() {
-                    let _ = main_window.update(cx, |this, cx| {
+                    main_window.update(cx, |this, cx| {
                         this.cancel_session(session_id, cx);
                     });
                 }
@@ -745,7 +750,7 @@ impl MainWindow {
             true,
             Arc::new(move |_window, cx| {
                 if let Some(main_window) = main_handle.upgrade() {
-                    let _ = main_window.update(cx, |this, cx| {
+                    main_window.update(cx, |this, cx| {
                         this.remove_session(session_id, cx);
                     });
                 }
@@ -858,24 +863,24 @@ impl MainWindow {
         self.video_info = Some(info.clone());
         self.replay_dismissed = false;
         self.set_replay_visible(false, cx);
-        let _ = self.controls_view.update(cx, |controls_view, cx| {
+        self.controls_view.update(cx, |controls_view, cx| {
             controls_view.set_handles(Some(controls.clone()), Some(info.clone()));
             cx.notify();
         });
-        let _ = self.luma_controls_view.update(cx, |luma_controls, cx| {
+        self.luma_controls_view.update(cx, |luma_controls, cx| {
             luma_controls.set_enabled(true, cx);
             if let (Some(target), Some(delta)) = (session.luma_target, session.luma_delta) {
                 luma_controls.set_values(target, delta, cx);
             }
         });
-        let _ = self.toolbar_view.update(cx, |toolbar_view, cx| {
+        self.toolbar_view.update(cx, |toolbar_view, cx| {
             toolbar_view.set_controls(Some(controls), cx);
             if let Some(state) = session.toolbar_state {
                 toolbar_view.restore(state, cx);
             }
             cx.notify();
         });
-        let _ = self.roi_overlay.update(cx, |overlay, cx| {
+        self.roi_overlay.update(cx, |overlay, cx| {
             overlay.set_info_handle(Some(info), session.roi, cx);
         });
         cx.notify();
@@ -890,18 +895,18 @@ impl MainWindow {
         self.video_info = None;
         self.replay_dismissed = false;
         self.set_replay_visible(false, cx);
-        let _ = self.controls_view.update(cx, |controls_view, cx| {
+        self.controls_view.update(cx, |controls_view, cx| {
             controls_view.set_handles(None, None);
             cx.notify();
         });
-        let _ = self.luma_controls_view.update(cx, |luma_controls, cx| {
+        self.luma_controls_view.update(cx, |luma_controls, cx| {
             luma_controls.set_enabled(false, cx);
         });
-        let _ = self.toolbar_view.update(cx, |toolbar_view, cx| {
+        self.toolbar_view.update(cx, |toolbar_view, cx| {
             toolbar_view.set_controls(None, cx);
             cx.notify();
         });
-        let _ = self.roi_overlay.update(cx, |overlay, cx| {
+        self.roi_overlay.update(cx, |overlay, cx| {
             overlay.set_info_handle(None, None, cx);
         });
         cx.notify();
@@ -931,7 +936,7 @@ impl MainWindow {
         cx: &mut Context<Self>,
     ) {
         let sidebar = handle.map(|handle| self.build_detection_sidebar(handle, cx));
-        let _ = self.detection_sidebar_host.update(cx, |host, cx| {
+        self.detection_sidebar_host.update(cx, |host, cx| {
             host.set_sidebar(sidebar, cx);
         });
     }
@@ -939,7 +944,7 @@ impl MainWindow {
     fn notify_task_sidebar(&mut self, cx: &mut Context<Self>) {
         let task_sidebar = self.task_sidebar.clone();
         cx.defer(move |cx| {
-            let _ = cx.update_entity(&task_sidebar, |_, cx| {
+            cx.update_entity(&task_sidebar, |_, cx| {
                 cx.notify();
             });
         });
@@ -998,7 +1003,7 @@ impl MainWindow {
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let total_height: f32 = window.bounds().size.height.into();
-        let video_content = self.player.as_ref().map(|player| player.clone());
+        let video_content = self.player.clone();
         let video_aspect = self.video_aspect();
         let frame_size = self.video_frame_size(total_height);
         let ended = self
@@ -1023,7 +1028,7 @@ impl Render for MainWindow {
             .into_iter()
             .map(|actions| actions.into_any_element())
             .collect();
-        let _ = self.titlebar.update(cx, move |titlebar, _| {
+        self.titlebar.update(cx, move |titlebar, _| {
             titlebar.set_children(titlebar_children);
         });
 
@@ -1167,7 +1172,7 @@ impl Render for MainWindow {
                     .w_full()
                     .on_children_prepainted(move |bounds, _window, cx| {
                         let bounds = bounds.first().copied();
-                        let _ = handle.update(cx, |this, cx| {
+                        handle.update(cx, |this, cx| {
                             if this.update_video_bounds(bounds) {
                                 cx.notify();
                             }
@@ -1293,7 +1298,7 @@ fn blur_chroma(uv_plane: &mut [u8], info: Nv12FrameInfo) {
     if uv_height == 0 {
         return;
     }
-    let uv_width = ((width + 1) / 2).min(stride / 2);
+    let uv_width = width.div_ceil(2).min(stride / 2);
     if uv_width == 0 {
         return;
     }

@@ -226,15 +226,20 @@ impl DetectionPipelineInner {
             return self.run_state();
         }
 
-        let detection_settings = self.current_detection_settings();
-        let settings = EffectiveSettings {
-            detection: detection_settings,
-            decoder: DecoderSettings {
-                backend: None,
-                channel_capacity: None,
-            },
-            ocr: OcrSettings { backend: None },
-            output: OutputSettings { path: None },
+        let settings = match crate::settings::resolve_gui_settings() {
+            Ok(settings) => settings,
+            Err(err) => {
+                eprintln!("failed to load config settings: {err}");
+                EffectiveSettings {
+                    detection: self.current_detection_settings(),
+                    decoder: DecoderSettings {
+                        backend: None,
+                        channel_capacity: None,
+                    },
+                    ocr: OcrSettings { backend: None },
+                    output: OutputSettings { path: None },
+                }
+            }
         };
         let plan = match build_detection_plan(&path, &settings) {
             Ok(plan) => plan,
@@ -288,10 +293,10 @@ impl DetectionPipelineInner {
             return self.run_state();
         }
 
-        if let Ok(mut slot) = self.cancel_tx.lock() {
-            if let Some(cancel_tx) = slot.take() {
-                let _ = cancel_tx.send(());
-            }
+        if let Ok(mut slot) = self.cancel_tx.lock()
+            && let Some(cancel_tx) = slot.take()
+        {
+            let _ = cancel_tx.send(());
         }
 
         self.clear_pause(false);
@@ -322,10 +327,10 @@ impl DetectionPipelineInner {
     }
 
     fn clear_pause(&self, paused: bool) {
-        if let Ok(slot) = self.pause_handle.lock() {
-            if let Some(handle) = slot.as_ref() {
-                handle.set_paused(paused);
-            }
+        if let Ok(slot) = self.pause_handle.lock()
+            && let Some(handle) = slot.as_ref()
+        {
+            handle.set_paused(paused);
         }
     }
 
@@ -543,18 +548,18 @@ async fn run_detection_task(
                     attempt_config.backend.as_str(),
                     provider_elapsed
                 );
-                if !backend_locked {
-                    if let Some(next_backend) = select_next_backend(&available, &tried) {
-                        let failed_backend = attempt_config.backend;
-                        eprintln!(
-                            "backend {failed} failed to initialize ({reason}); trying {next}",
-                            failed = failed_backend.as_str(),
-                            reason = err,
-                            next = next_backend.as_str()
-                        );
-                        attempt_config.backend = next_backend;
-                        continue;
-                    }
+                if !backend_locked
+                    && let Some(next_backend) = select_next_backend(&available, &tried)
+                {
+                    let failed_backend = attempt_config.backend;
+                    eprintln!(
+                        "backend {failed} failed to initialize ({reason}); trying {next}",
+                        failed = failed_backend.as_str(),
+                        reason = err,
+                        next = next_backend.as_str()
+                    );
+                    attempt_config.backend = next_backend;
+                    continue;
                 }
                 inner.finish();
                 return;
@@ -565,11 +570,11 @@ async fn run_detection_task(
             Ok(streams) => streams,
             Err(err) => {
                 eprintln!("detection pipeline setup failed: {err}");
-                if !backend_locked {
-                    if let Some(next_backend) = select_next_backend(&available, &tried) {
-                        attempt_config.backend = next_backend;
-                        continue;
-                    }
+                if !backend_locked
+                    && let Some(next_backend) = select_next_backend(&available, &tried)
+                {
+                    attempt_config.backend = next_backend;
+                    continue;
                 }
                 inner.finish();
                 return;
@@ -587,18 +592,19 @@ async fn run_detection_task(
             }
             Err((err, processed)) => {
                 eprintln!("detection pipeline failed: {err}");
-                if processed == 0 && !backend_locked {
-                    if let Some(next_backend) = select_next_backend(&available, &tried) {
-                        let failed_backend = attempt_config.backend;
-                        eprintln!(
-                            "backend {failed} failed to decode ({reason}); trying {next}",
-                            failed = failed_backend.as_str(),
-                            reason = err,
-                            next = next_backend.as_str()
-                        );
-                        attempt_config.backend = next_backend;
-                        continue;
-                    }
+                if processed == 0
+                    && !backend_locked
+                    && let Some(next_backend) = select_next_backend(&available, &tried)
+                {
+                    let failed_backend = attempt_config.backend;
+                    eprintln!(
+                        "backend {failed} failed to decode ({reason}); trying {next}",
+                        failed = failed_backend.as_str(),
+                        reason = err,
+                        next = next_backend.as_str()
+                    );
+                    attempt_config.backend = next_backend;
+                    continue;
                 }
                 inner.finish();
                 return;

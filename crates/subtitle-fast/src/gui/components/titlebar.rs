@@ -297,14 +297,12 @@ impl Render for Titlebar {
             drag_region
         };
 
-        let drag_region = drag_region.child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(div().text_size(px(12.0)).child(self.title.clone()))
-                .children(children),
-        );
+        let content_gap = if has_title { px(8.0) } else { px(0.0) };
+        let mut content = div().flex().items_center().h_full().gap(content_gap);
+        if has_title {
+            content = content.child(div().text_size(px(12.0)).child(self.title.clone()));
+        }
+        let drag_region = drag_region.child(content.children(children));
 
         let mut controls = div().flex().items_center().h_full().gap(px(2.0));
         if self.platform_style == PlatformStyle::Windows {

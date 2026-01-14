@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -137,7 +137,7 @@ impl SessionHandle {
     }
 }
 
-fn session_label(path: &PathBuf) -> SharedString {
+fn session_label(path: &Path) -> SharedString {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())

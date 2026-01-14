@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
-    Action, Bounds, Context, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, OwnedMenu,
-    OwnedMenuItem, Pixels, Render, Window, div, hsla, px, rgb,
+    Action, Bounds, Context, Corner, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent,
+    OwnedMenu, OwnedMenuItem, Pixels, Render, Window, anchored, div, hsla, point, px, rgb,
 };
 
 use super::menu_bar_buttons::{MenuBarButtons, MenuBarButtonsCallbacks};
@@ -101,21 +101,19 @@ impl Render for MenuBar {
                     return;
                 }
                 let position = event.position;
-                let _ = handle.update(cx, |this, cx| {
+                handle.update(cx, |this, cx| {
                     if this.open_menu != Some(open_index) {
                         return;
                     }
-                    if let Some(bounds) = this.popup_bounds.clone() {
-                        if bounds.contains(&position) {
-                            return;
-                        }
-                    }
-                    if let Some(button_bounds) =
-                        this.button_bounds.get(open_index).and_then(|b| b.clone())
+                    if let Some(bounds) = this.popup_bounds
+                        && bounds.contains(&position)
                     {
-                        if button_bounds.contains(&position) {
-                            return;
-                        }
+                        return;
+                    }
+                    if let Some(button_bounds) = this.button_bounds.get(open_index).and_then(|b| *b)
+                        && button_bounds.contains(&position)
+                    {
+                        return;
                     }
                     this.close_menu(cx);
                 });
@@ -129,7 +127,7 @@ impl Render for MenuBar {
                     return;
                 }
                 let position = event.position;
-                let _ = handle.update(cx, |this, cx| {
+                handle.update(cx, |this, cx| {
                     if this.open_menu != Some(open_index) {
                         return;
                     }
@@ -187,14 +185,14 @@ impl Render for MenuBar {
             self.open_menu,
             MenuBarButtonsCallbacks {
                 on_button_click: Arc::new(move |index, _window, cx| {
-                    let _ = handle.update(cx, |this, cx| {
+                    handle.update(cx, |this, cx| {
                         this.toggle_menu(index, cx);
                     });
                 }),
                 on_button_bounds: {
                     let handle = cx.entity();
                     Arc::new(move |index, bounds, cx| {
-                        let _ = handle.update(cx, |this, _| {
+                        handle.update(cx, |this, _| {
                             if let Some(slot) = this.button_bounds.get_mut(index) {
                                 *slot = bounds;
                             }
@@ -204,7 +202,7 @@ impl Render for MenuBar {
                 on_bar_bounds: {
                     let handle = cx.entity();
                     Arc::new(move |bounds, cx| {
-                        let _ = handle.update(cx, |this, _| {
+                        handle.update(cx, |this, _| {
                             this.bar_bounds = bounds;
                         });
                     })
@@ -214,110 +212,100 @@ impl Render for MenuBar {
 
         let mut root = div().relative().child(menu_buttons);
 
-        if let Some(open_index) = self.open_menu {
-            if let Some(menu) = self.menus.get(open_index) {
-                let entries = Self::menu_entries(menu);
-                let popup_left = self
-                    .button_bounds
-                    .get(open_index)
-                    .and_then(|bounds| bounds.clone())
-                    .and_then(|button_bounds| {
-                        self.bar_bounds
-                            .map(|bar_bounds| button_bounds.left() - bar_bounds.left())
-                    })
-                    .unwrap_or(px(0.0));
-                let popup_top = self
-                    .button_bounds
-                    .get(open_index)
-                    .and_then(|bounds| bounds.clone())
-                    .and_then(|button_bounds| {
-                        self.bar_bounds
-                            .map(|bar_bounds| button_bounds.bottom() - bar_bounds.top())
-                    })
-                    .unwrap_or(px(0.0))
-                    + px(MENU_POPUP_OFFSET_Y);
+        if let Some(open_index) = self.open_menu
+            && let Some(menu) = self.menus.get(open_index)
+        {
+            let entries = Self::menu_entries(menu);
+            let anchor = self
+                .button_bounds
+                .get(open_index)
+                .and_then(|bounds| *bounds)
+                .map(|button_bounds| point(button_bounds.left(), button_bounds.bottom()))
+                .unwrap_or(point(px(0.0), px(0.0)));
 
-                let handle = cx.entity();
-                let popup_bounds_handle = handle.clone();
-                let popup_content = entries.into_iter().map(|entry| match entry {
-                    MenuEntry::Separator => div()
-                        .h(px(1.0))
-                        .bg(popup_border)
-                        .mx(px(8.0))
-                        .my(px(4.0))
-                        .into_any_element(),
-                    MenuEntry::Label { name } => div()
-                        .px(px(10.0))
-                        .py(px(6.0))
-                        .text_size(px(11.0))
-                        .text_color(muted_color)
-                        .child(name)
-                        .into_any_element(),
-                    MenuEntry::Action {
-                        name,
-                        action,
-                        indent,
-                    } => {
-                        let enabled = cx.is_action_available(action.as_ref());
-                        let indent_padding = px(10.0 + indent as f32 * 12.0);
-                        let mut row = div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .h(px(MENU_ITEM_HEIGHT))
-                            .px(indent_padding)
-                            .text_size(px(12.0))
-                            .text_color(if enabled { text_color } else { muted_color })
-                            .child(name);
+            let handle = cx.entity();
+            let popup_bounds_handle = handle.clone();
+            let popup_content = entries.into_iter().map(|entry| match entry {
+                MenuEntry::Separator => div()
+                    .h(px(1.0))
+                    .bg(popup_border)
+                    .mx(px(8.0))
+                    .my(px(4.0))
+                    .into_any_element(),
+                MenuEntry::Label { name } => div()
+                    .px(px(10.0))
+                    .py(px(6.0))
+                    .text_size(px(11.0))
+                    .text_color(muted_color)
+                    .child(name)
+                    .into_any_element(),
+                MenuEntry::Action {
+                    name,
+                    action,
+                    indent,
+                } => {
+                    let enabled = cx.is_action_available(action.as_ref());
+                    let indent_padding = px(10.0 + indent as f32 * 12.0);
+                    let mut row = div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .h(px(MENU_ITEM_HEIGHT))
+                        .px(indent_padding)
+                        .text_size(px(12.0))
+                        .text_color(if enabled { text_color } else { muted_color })
+                        .child(name);
 
-                        if enabled {
-                            let action = action.boxed_clone();
-                            let handle = handle.clone();
-                            row = row
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(hover_bg))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |_, _event, _window, cx| {
-                                        cx.dispatch_action(action.as_ref());
-                                        let _ = handle.update(cx, |this, cx| {
-                                            this.close_menu(cx);
-                                        });
-                                    }),
-                                );
-                        }
-
-                        row.into_any_element()
+                    if enabled {
+                        let action = action.boxed_clone();
+                        let handle = handle.clone();
+                        row = row
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover_bg))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |_, _event, _window, cx| {
+                                    cx.dispatch_action(action.as_ref());
+                                    handle.update(cx, |this, cx| {
+                                        this.close_menu(cx);
+                                    });
+                                }),
+                            );
                     }
+
+                    row.into_any_element()
+                }
+            });
+
+            let popup = div()
+                .w(px(MENU_POPUP_WIDTH))
+                .bg(popup_bg)
+                .border_1()
+                .border_color(popup_border)
+                .rounded(px(MENU_POPUP_RADIUS))
+                .shadow(vec![gpui::BoxShadow {
+                    color: hsla(0.0, 0.0, 0.0, 0.35),
+                    offset: gpui::point(px(0.0), px(4.0)),
+                    blur_radius: px(8.0),
+                    spread_radius: px(0.0),
+                }])
+                .occlude()
+                .children(popup_content);
+
+            let popup_wrapper = div().on_children_prepainted(move |bounds, _window, cx| {
+                let bounds = bounds.first().copied();
+                popup_bounds_handle.update(cx, |this, _| {
+                    this.popup_bounds = bounds;
                 });
+            });
 
-                let popup = div()
-                    .absolute()
-                    .top(popup_top)
-                    .left(popup_left)
-                    .w(px(MENU_POPUP_WIDTH))
-                    .bg(popup_bg)
-                    .border_1()
-                    .border_color(popup_border)
-                    .rounded(px(MENU_POPUP_RADIUS))
-                    .shadow(vec![gpui::BoxShadow {
-                        color: hsla(0.0, 0.0, 0.0, 0.35),
-                        offset: gpui::point(px(0.0), px(4.0)),
-                        blur_radius: px(8.0),
-                        spread_radius: px(0.0),
-                    }])
-                    .occlude()
-                    .children(popup_content);
+            let anchored_popup = anchored()
+                .anchor(Corner::TopLeft)
+                .position(anchor)
+                .offset(point(px(0.0), px(MENU_POPUP_OFFSET_Y)))
+                .child(popup);
 
-                let popup_wrapper = div().on_children_prepainted(move |bounds, _window, cx| {
-                    let bounds = bounds.first().copied();
-                    let _ = popup_bounds_handle.update(cx, |this, _| {
-                        this.popup_bounds = bounds;
-                    });
-                });
-
-                root = root.child(popup_wrapper.child(popup));
-            }
+            root = root.child(popup_wrapper.child(anchored_popup));
         }
 
         root

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -36,19 +36,10 @@ pub struct VideoPlayerControlHandle {
     sender: UnboundedSender<PlayerCommand>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct VideoOpenOptions {
     pub paused: bool,
     pub start_frame: Option<u64>,
-}
-
-impl Default for VideoOpenOptions {
-    fn default() -> Self {
-        Self {
-            paused: false,
-            start_frame: None,
-        }
-    }
 }
 
 impl VideoOpenOptions {
@@ -237,23 +228,25 @@ impl VideoPlayerInfoHandle {
             match info {
                 SeekInfo::Time { position, .. } => {
                     state.last_timestamp = Some(position);
-                    if let Some(fps) = metadata.fps {
-                        if fps.is_finite() && fps > 0.0 {
-                            let frame = position.as_secs_f64() * fps;
-                            if frame.is_finite() && frame >= 0.0 {
-                                state.last_frame_index = Some(frame.round() as u64);
-                            }
+                    if let Some(fps) = metadata.fps
+                        && fps.is_finite()
+                        && fps > 0.0
+                    {
+                        let frame = position.as_secs_f64() * fps;
+                        if frame.is_finite() && frame >= 0.0 {
+                            state.last_frame_index = Some(frame.round() as u64);
                         }
                     }
                 }
                 SeekInfo::Frame { frame, .. } => {
                     state.last_frame_index = Some(frame);
-                    if let Some(fps) = metadata.fps {
-                        if fps.is_finite() && fps > 0.0 {
-                            let seconds = frame as f64 / fps;
-                            if seconds.is_finite() && seconds >= 0.0 {
-                                state.last_timestamp = Some(Duration::from_secs_f64(seconds));
-                            }
+                    if let Some(fps) = metadata.fps
+                        && fps.is_finite()
+                        && fps > 0.0
+                    {
+                        let seconds = frame as f64 / fps;
+                        if seconds.is_finite() && seconds >= 0.0 {
+                            state.last_timestamp = Some(Duration::from_secs_f64(seconds));
                         }
                     }
                 }
@@ -385,15 +378,31 @@ struct SeekTiming {
     serial: u64,
 }
 
+struct PlayerCommandContext<'a> {
+    input_path: &'a mut Option<PathBuf>,
+    paused: &'a mut bool,
+    prime_first_frame: &'a mut bool,
+    has_frame: &'a mut bool,
+    scrubbing: &'a mut bool,
+    pending_seek: &'a mut Option<SeekInfo>,
+    pending_seek_frame: &'a mut Option<u64>,
+    seek_timing: &'a mut Option<SeekTiming>,
+    open_requested: &'a mut bool,
+    open_start_frame: &'a mut Option<u64>,
+    preprocessors: &'a mut Vec<PreprocessorEntry>,
+    refresh_cached: &'a mut bool,
+    info: &'a VideoPlayerInfoHandle,
+}
+
 fn open_session(
     backend: Backend,
-    input_path: &PathBuf,
+    input_path: &Path,
     start_frame: Option<u64>,
     info: &VideoPlayerInfoHandle,
 ) -> Option<DecoderSession> {
     let config = Configuration {
         backend,
-        input: Some(input_path.clone()),
+        input: Some(input_path.to_path_buf()),
         channel_capacity: None,
         output_format: OutputFormat::Nv12,
         start_frame,
@@ -433,75 +442,63 @@ fn open_session(
 fn handle_command(
     command: PlayerCommand,
     session: Option<&DecoderSession>,
-    input_path: &mut Option<PathBuf>,
-    paused: &mut bool,
-    prime_first_frame: &mut bool,
-    has_frame: &mut bool,
-    scrubbing: &mut bool,
-    pending_seek: &mut Option<SeekInfo>,
-    pending_seek_frame: &mut Option<u64>,
-    seek_timing: &mut Option<SeekTiming>,
-    open_requested: &mut bool,
-    open_start_frame: &mut Option<u64>,
-    preprocessors: &mut Vec<PreprocessorEntry>,
-    refresh_cached: &mut bool,
-    info: &VideoPlayerInfoHandle,
+    ctx: &mut PlayerCommandContext<'_>,
 ) -> bool {
     match command {
         PlayerCommand::Shutdown => {
-            *input_path = None;
-            *paused = false;
-            *prime_first_frame = false;
-            *has_frame = false;
-            *scrubbing = false;
-            *pending_seek = None;
-            *pending_seek_frame = None;
-            *seek_timing = None;
-            *open_requested = false;
-            *open_start_frame = None;
-            preprocessors.clear();
-            *refresh_cached = false;
+            *ctx.input_path = None;
+            *ctx.paused = false;
+            *ctx.prime_first_frame = false;
+            *ctx.has_frame = false;
+            *ctx.scrubbing = false;
+            *ctx.pending_seek = None;
+            *ctx.pending_seek_frame = None;
+            *ctx.seek_timing = None;
+            *ctx.open_requested = false;
+            *ctx.open_start_frame = None;
+            ctx.preprocessors.clear();
+            *ctx.refresh_cached = false;
             return false;
         }
         PlayerCommand::Open(path, options) => {
-            *input_path = Some(path);
-            *paused = options.paused;
-            *prime_first_frame = options.paused;
-            *has_frame = false;
-            *scrubbing = false;
-            *pending_seek = None;
-            *pending_seek_frame = None;
-            *seek_timing = None;
-            *open_requested = true;
-            *open_start_frame = options.start_frame;
-            info.set_metadata(VideoMetadata::default());
-            info.reset_for_open(options.paused);
+            *ctx.input_path = Some(path);
+            *ctx.paused = options.paused;
+            *ctx.prime_first_frame = options.paused;
+            *ctx.has_frame = false;
+            *ctx.scrubbing = false;
+            *ctx.pending_seek = None;
+            *ctx.pending_seek_frame = None;
+            *ctx.seek_timing = None;
+            *ctx.open_requested = true;
+            *ctx.open_start_frame = options.start_frame;
+            ctx.info.set_metadata(VideoMetadata::default());
+            ctx.info.reset_for_open(options.paused);
         }
         PlayerCommand::Play => {
-            *paused = false;
-            info.update_playback(|state| state.paused = false);
+            *ctx.paused = false;
+            ctx.info.update_playback(|state| state.paused = false);
         }
         PlayerCommand::Pause => {
-            *paused = true;
-            info.update_playback(|state| state.paused = true);
+            *ctx.paused = true;
+            ctx.info.update_playback(|state| state.paused = true);
         }
         PlayerCommand::TogglePause => {
-            *paused = !*paused;
-            let paused = *paused;
-            info.update_playback(|state| state.paused = paused);
+            *ctx.paused = !*ctx.paused;
+            let paused = *ctx.paused;
+            ctx.info.update_playback(|state| state.paused = paused);
         }
         PlayerCommand::BeginScrub => {
-            *scrubbing = true;
-            info.update_playback(|state| state.scrubbing = true);
+            *ctx.scrubbing = true;
+            ctx.info.update_playback(|state| state.scrubbing = true);
         }
         PlayerCommand::EndScrub => {
-            *scrubbing = false;
-            info.update_playback(|state| state.scrubbing = false);
+            *ctx.scrubbing = false;
+            ctx.info.update_playback(|state| state.scrubbing = false);
         }
         PlayerCommand::Seek(seek) => {
-            let metadata = info.metadata();
-            *open_start_frame = None;
-            *pending_seek_frame = match seek {
+            let metadata = ctx.info.metadata();
+            *ctx.open_start_frame = None;
+            *ctx.pending_seek_frame = match seek {
                 SeekInfo::Frame { frame, .. } => Some(frame),
                 SeekInfo::Time { position, .. } => metadata.fps.and_then(|fps| {
                     if fps.is_finite() && fps > 0.0 {
@@ -516,47 +513,47 @@ fn handle_command(
                     }
                 }),
             };
-            info.apply_seek_preview(seek);
+            ctx.info.apply_seek_preview(seek);
             if let Some(session) = session {
                 match session.controller.seek(seek) {
                     Ok(serial) => {
-                        *pending_seek = None;
-                        *seek_timing = Some(SeekTiming { serial });
+                        *ctx.pending_seek = None;
+                        *ctx.seek_timing = Some(SeekTiming { serial });
                     }
                     Err(_) => {
-                        *pending_seek = Some(seek);
-                        *seek_timing = None;
-                        *open_requested = true;
+                        *ctx.pending_seek = Some(seek);
+                        *ctx.seek_timing = None;
+                        *ctx.open_requested = true;
                     }
                 }
             } else {
-                *pending_seek = Some(seek);
-                *seek_timing = None;
-                *open_requested = true;
+                *ctx.pending_seek = Some(seek);
+                *ctx.seek_timing = None;
+                *ctx.open_requested = true;
             }
         }
         PlayerCommand::Replay => {
-            *paused = false;
-            info.update_playback(|state| state.paused = false);
-            if *scrubbing {
-                *scrubbing = false;
-                info.update_playback(|state| state.scrubbing = false);
+            *ctx.paused = false;
+            ctx.info.update_playback(|state| state.paused = false);
+            if *ctx.scrubbing {
+                *ctx.scrubbing = false;
+                ctx.info.update_playback(|state| state.scrubbing = false);
             }
-            *pending_seek = None;
-            *pending_seek_frame = None;
-            *seek_timing = None;
-            *open_requested = true;
-            *open_start_frame = None;
-            info.reset_for_replay();
+            *ctx.pending_seek = None;
+            *ctx.pending_seek_frame = None;
+            *ctx.seek_timing = None;
+            *ctx.open_requested = true;
+            *ctx.open_start_frame = None;
+            ctx.info.reset_for_replay();
         }
         PlayerCommand::SetPreprocessor { key, preprocessor } => {
-            if upsert_preprocessor(preprocessors, key, preprocessor) {
-                *refresh_cached = true;
+            if upsert_preprocessor(ctx.preprocessors, key, preprocessor) {
+                *ctx.refresh_cached = true;
             }
         }
         PlayerCommand::RemovePreprocessor(key) => {
-            if remove_preprocessor(preprocessors, &key) {
-                *refresh_cached = true;
+            if remove_preprocessor(ctx.preprocessors, &key) {
+                *ctx.refresh_cached = true;
             }
         }
     }
@@ -649,33 +646,30 @@ fn spawn_decoder(
                         break;
                     };
                     let mut refresh_cached = false;
-                    if !handle_command(
-                        command,
-                        session.as_ref(),
-                        &mut input_path,
-                        &mut paused,
-                        &mut prime_first_frame,
-                        &mut has_frame,
-                        &mut scrubbing,
-                        &mut pending_seek,
-                        &mut pending_seek_frame,
-                        &mut seek_timing,
-                        &mut open_requested,
-                        &mut open_start_frame,
-                        &mut preprocessors,
-                        &mut refresh_cached,
-                        &info,
-                    ) {
+                    let mut ctx = PlayerCommandContext {
+                        input_path: &mut input_path,
+                        paused: &mut paused,
+                        prime_first_frame: &mut prime_first_frame,
+                        has_frame: &mut has_frame,
+                        scrubbing: &mut scrubbing,
+                        pending_seek: &mut pending_seek,
+                        pending_seek_frame: &mut pending_seek_frame,
+                        seek_timing: &mut seek_timing,
+                        open_requested: &mut open_requested,
+                        open_start_frame: &mut open_start_frame,
+                        preprocessors: &mut preprocessors,
+                        refresh_cached: &mut refresh_cached,
+                        info: &info,
+                    };
+                    if !handle_command(command, session.as_ref(), &mut ctx) {
                         break;
                     }
-                    if refresh_cached {
-                        if let Some(cache) = last_frame.as_ref() {
-                            if let Some(gpui_frame) = frame_from_cache(cache, &preprocessors) {
-                                if sender.send(gpui_frame).is_ok() {
-                                    let _ = frame_ready_tx.unbounded_send(());
-                                }
-                            }
-                        }
+                    if refresh_cached
+                        && let Some(cache) = last_frame.as_ref()
+                        && let Some(gpui_frame) = frame_from_cache(cache, &preprocessors)
+                        && sender.send(gpui_frame).is_ok()
+                    {
+                        let _ = frame_ready_tx.unbounded_send(());
                     }
                 }
                 continue;
@@ -701,33 +695,30 @@ fn spawn_decoder(
                 };
                 if let Some(command) = command {
                     let mut refresh_cached = false;
-                    if !handle_command(
-                        command,
-                        session.as_ref(),
-                        &mut input_path,
-                        &mut paused,
-                        &mut prime_first_frame,
-                        &mut has_frame,
-                        &mut scrubbing,
-                        &mut pending_seek,
-                        &mut pending_seek_frame,
-                        &mut seek_timing,
-                        &mut open_requested,
-                        &mut open_start_frame,
-                        &mut preprocessors,
-                        &mut refresh_cached,
-                        &info,
-                    ) {
+                    let mut ctx = PlayerCommandContext {
+                        input_path: &mut input_path,
+                        paused: &mut paused,
+                        prime_first_frame: &mut prime_first_frame,
+                        has_frame: &mut has_frame,
+                        scrubbing: &mut scrubbing,
+                        pending_seek: &mut pending_seek,
+                        pending_seek_frame: &mut pending_seek_frame,
+                        seek_timing: &mut seek_timing,
+                        open_requested: &mut open_requested,
+                        open_start_frame: &mut open_start_frame,
+                        preprocessors: &mut preprocessors,
+                        refresh_cached: &mut refresh_cached,
+                        info: &info,
+                    };
+                    if !handle_command(command, session.as_ref(), &mut ctx) {
                         break;
                     }
-                    if refresh_cached {
-                        if let Some(cache) = last_frame.as_ref() {
-                            if let Some(gpui_frame) = frame_from_cache(cache, &preprocessors) {
-                                if sender.send(gpui_frame).is_ok() {
-                                    let _ = frame_ready_tx.unbounded_send(());
-                                }
-                            }
-                        }
+                    if refresh_cached
+                        && let Some(cache) = last_frame.as_ref()
+                        && let Some(gpui_frame) = frame_from_cache(cache, &preprocessors)
+                        && sender.send(gpui_frame).is_ok()
+                    {
+                        let _ = frame_ready_tx.unbounded_send(());
                     }
                     if open_requested {
                         session = None;
@@ -747,45 +738,39 @@ fn spawn_decoder(
                         break;
                     };
                     let mut refresh_cached = false;
-                    if !handle_command(
-                        command,
-                        session.as_ref(),
-                        &mut input_path,
-                        &mut paused,
-                        &mut prime_first_frame,
-                        &mut has_frame,
-                        &mut scrubbing,
-                        &mut pending_seek,
-                        &mut pending_seek_frame,
-                        &mut seek_timing,
-                        &mut open_requested,
-                        &mut open_start_frame,
-                        &mut preprocessors,
-                        &mut refresh_cached,
-                        &info,
-                    ) {
+                    let mut ctx = PlayerCommandContext {
+                        input_path: &mut input_path,
+                        paused: &mut paused,
+                        prime_first_frame: &mut prime_first_frame,
+                        has_frame: &mut has_frame,
+                        scrubbing: &mut scrubbing,
+                        pending_seek: &mut pending_seek,
+                        pending_seek_frame: &mut pending_seek_frame,
+                        seek_timing: &mut seek_timing,
+                        open_requested: &mut open_requested,
+                        open_start_frame: &mut open_start_frame,
+                        preprocessors: &mut preprocessors,
+                        refresh_cached: &mut refresh_cached,
+                        info: &info,
+                    };
+                    if !handle_command(command, session.as_ref(), &mut ctx) {
                         break;
                     }
-                    if refresh_cached {
-                        if let Some(cache) = last_frame.as_ref() {
-                            if let Some(gpui_frame) = frame_from_cache(cache, &preprocessors)
-                            {
-                                if sender.send(gpui_frame).is_ok() {
+                    if refresh_cached
+                        && let Some(cache) = last_frame.as_ref()
+                            && let Some(gpui_frame) = frame_from_cache(cache, &preprocessors)
+                                && sender.send(gpui_frame).is_ok() {
                                     let _ = frame_ready_tx.unbounded_send(());
                                 }
-                            }
-                        }
-                    }
                     restart_requested = open_requested;
                 }
                 frame = frame => {
                     match frame {
                         Some(Ok(frame)) => {
-                            if let Some(pending) = seek_timing.as_ref().map(|entry| entry.serial) {
-                                if frame.serial() != pending {
+                            if let Some(pending) = seek_timing.as_ref().map(|entry| entry.serial)
+                                && frame.serial() != pending {
                                     continue;
                                 }
-                            }
                             if active_serial != Some(frame.serial()) {
                                 active_serial = Some(frame.serial());
                                 started = false;
@@ -801,11 +786,9 @@ fn spawn_decoder(
                                 if timing.serial == frame.serial() {
                                     if let (Some(target), Some(actual)) =
                                         (pending_seek_frame, frame.index())
-                                    {
-                                        if actual.abs_diff(target) <= 1 {
+                                        && actual.abs_diff(target) <= 1 {
                                             suppress_seek_frame = true;
                                         }
-                                    }
                                     true
                                 } else {
                                     false
@@ -818,34 +801,31 @@ fn spawn_decoder(
                                 pending_seek_frame = None;
                                 seek_timing = None;
                             }
-                            if !started {
-                                if !paused_like {
+                            if !started
+                                && !paused_like {
                                     start_instant = Instant::now();
                                     next_deadline = start_instant;
                                     started = true;
                                 }
-                            }
 
                             if let Some(timestamp) = frame.pts() {
                                 let first = first_timestamp.get_or_insert(timestamp);
-                                if !paused_like {
-                                    if let Some(delta) = timestamp.checked_sub(*first) {
+                                if !paused_like
+                                    && let Some(delta) = timestamp.checked_sub(*first) {
                                         let target = start_instant + delta;
                                         let now = Instant::now();
                                         if target > now {
                                             tokio::time::sleep(target - now).await;
                                         }
                                     }
-                                }
-                            } else if let Some(duration) = frame_duration {
-                                if !paused_like {
+                            } else if let Some(duration) = frame_duration
+                                && !paused_like {
                                     let now = Instant::now();
                                     if next_deadline > now {
                                         tokio::time::sleep(next_deadline - now).await;
                                     }
                                     next_deadline += duration;
                                 }
-                            }
 
                             info.update_playback(|state| {
                                 state.last_timestamp = frame.pts();

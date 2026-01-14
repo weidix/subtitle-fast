@@ -169,25 +169,29 @@ pub struct Sidebar {
     collapsed: bool,
 }
 
+pub struct SidebarConfig {
+    pub edge: DraggableEdge,
+    pub range: DragRange,
+    pub collapse_direction: CollapseDirection,
+    pub collapsed_width: Pixels,
+    pub collapse_duration: Duration,
+    pub drag_hit_thickness: Pixels,
+}
+
 impl Sidebar {
     pub fn create(
-        edge: DraggableEdge,
-        range: DragRange,
-        collapse_direction: CollapseDirection,
-        collapsed_width: Pixels,
-        collapse_duration: Duration,
-        drag_hit_thickness: Pixels,
+        config: SidebarConfig,
         content: impl Fn() -> AnyElement + 'static,
         cx: &mut App,
     ) -> (Entity<Self>, SidebarHandle) {
         let entity = cx.new(|_| {
             Self::new(
-                edge,
-                range,
-                collapse_direction,
-                collapsed_width,
-                collapse_duration,
-                drag_hit_thickness,
+                config.edge,
+                config.range,
+                config.collapse_direction,
+                config.collapsed_width,
+                config.collapse_duration,
+                config.drag_hit_thickness,
                 Box::new(content),
             )
         });
@@ -317,7 +321,7 @@ impl Render for Sidebar {
                 if phase != DispatchPhase::Capture {
                     return;
                 }
-                let _ = handle.update(cx, |this, cx| {
+                handle.update(cx, |this, cx| {
                     this.update_drag_from_position(event.position, cx);
                 });
                 window.refresh();
@@ -329,7 +333,7 @@ impl Render for Sidebar {
                     return;
                 }
                 if event.button == MouseButton::Left {
-                    let _ = handle.update(cx, |this, cx| {
+                    handle.update(cx, |this, cx| {
                         this.drag_state.end_drag();
                         cx.notify();
                     });

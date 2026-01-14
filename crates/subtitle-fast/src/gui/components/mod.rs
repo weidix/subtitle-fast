@@ -27,7 +27,9 @@ pub use detection_sidebar::{
 };
 pub use help_window::HelpWindow;
 pub use menu_bar::MenuBar;
-pub use sidebar::{CollapseDirection, DragRange, DraggableEdge, Sidebar, SidebarHandle};
+pub use sidebar::{
+    CollapseDirection, DragRange, DraggableEdge, Sidebar, SidebarConfig, SidebarHandle,
+};
 pub use task_sidebar::{TaskSidebar, TaskSidebarCallbacks};
 pub use titlebar::Titlebar;
 pub use titlebar_actions::{TitlebarActions, TitlebarActionsCallbacks};

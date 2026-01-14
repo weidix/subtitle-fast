@@ -113,7 +113,7 @@ impl DetectionSidebar {
         let receiver = cx.prompt_for_new_path(&directory, suggested_name.as_deref());
         let handle = self.handle.clone();
 
-        let _ = window.spawn(cx, async move |_| match receiver.await {
+        let task = window.spawn(cx, async move |_| match receiver.await {
             Ok(Ok(Some(path))) => {
                 handle.export_subtitles_to(path);
             }
@@ -125,6 +125,7 @@ impl DetectionSidebar {
                 eprintln!("export dialog failed: {err}");
             }
         });
+        task.detach();
     }
 }
 

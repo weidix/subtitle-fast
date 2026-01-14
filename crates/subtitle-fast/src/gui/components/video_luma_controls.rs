@@ -291,7 +291,7 @@ impl VideoLumaControls {
             .items_center()
             .on_children_prepainted(move |bounds, _window, cx| {
                 let bounds = bounds.first().copied();
-                let _ = slider_handle.update(cx, |this, _| {
+                slider_handle.update(cx, |this, _| {
                     this.update_bounds(field, bounds);
                 });
             })
@@ -382,7 +382,7 @@ impl Render for VideoLumaControls {
                 if phase != DispatchPhase::Capture {
                     return;
                 }
-                let _ = handle.update(cx, |this, cx| {
+                handle.update(cx, |this, cx| {
                     this.update_drag(event.position, cx);
                 });
                 window.refresh();
@@ -394,7 +394,7 @@ impl Render for VideoLumaControls {
                     return;
                 }
                 if event.button == MouseButton::Left {
-                    let _ = handle.update(cx, |this, cx| {
+                    handle.update(cx, |this, cx| {
                         this.end_drag(event.position, cx);
                     });
                     window.refresh();

@@ -295,33 +295,33 @@ impl VideoRoiOverlay {
 
 impl Render for VideoRoiOverlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.visible {
-            if let Some(dragging) = self.dragging {
-                window.set_window_cursor_style(cursor_for_corner(dragging.corner));
-                let handle = cx.entity();
-                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture {
-                        return;
-                    }
-                    let _ = handle.update(cx, |this, cx| {
-                        this.update_drag(event.position, cx);
+        if self.visible
+            && let Some(dragging) = self.dragging
+        {
+            window.set_window_cursor_style(cursor_for_corner(dragging.corner));
+            let handle = cx.entity();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture {
+                    return;
+                }
+                handle.update(cx, |this, cx| {
+                    this.update_drag(event.position, cx);
+                });
+                window.refresh();
+            });
+
+            let handle = cx.entity();
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture {
+                    return;
+                }
+                if event.button == MouseButton::Left {
+                    handle.update(cx, |this, cx| {
+                        this.end_drag(cx);
                     });
                     window.refresh();
-                });
-
-                let handle = cx.entity();
-                window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture {
-                        return;
-                    }
-                    if event.button == MouseButton::Left {
-                        let _ = handle.update(cx, |this, cx| {
-                            this.end_drag(cx);
-                        });
-                        window.refresh();
-                    }
-                });
-            }
+                }
+            });
         }
 
         let handle = cx.entity();
@@ -332,7 +332,7 @@ impl Render for VideoRoiOverlay {
             .size_full()
             .on_children_prepainted(move |bounds, _window, cx| {
                 let bounds = bounds.first().copied();
-                let _ = handle.update(cx, |this, cx| {
+                handle.update(cx, |this, cx| {
                     if this.update_container_bounds(bounds) {
                         cx.notify();
                     }

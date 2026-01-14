@@ -66,7 +66,7 @@ impl DetectedSubtitlesList {
             while let Some(message) = subtitle_rx.next().await {
                 if cx
                     .update(|_window, cx| {
-                        let _ = handle.update(cx, |this, cx| {
+                        handle.update(cx, |this, cx| {
                             this.apply_message(message);
                             cx.notify();
                         });

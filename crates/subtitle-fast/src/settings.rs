@@ -72,6 +72,27 @@ pub struct ResolvedSettings {
     pub settings: EffectiveSettings,
 }
 
+pub(crate) fn resolve_gui_settings() -> Result<EffectiveSettings, ConfigError> {
+    let cli = CliArgs {
+        backend: None,
+        config: None,
+        list_backends: false,
+        detection_samples_per_second: 7,
+        decoder_channel_capacity: None,
+        detector_target: None,
+        detector_delta: None,
+        comparator: None,
+        roi: None,
+        output: None,
+        ocr_backend: None,
+        input: None,
+    };
+    let sources = CliSources::default();
+    let (file, config_path) = load_config(None)?;
+    let resolved = merge(&cli, &sources, file, config_path)?;
+    Ok(resolved.settings)
+}
+
 #[derive(Debug, Clone)]
 pub struct DetectionSettings {
     pub samples_per_second: u32,

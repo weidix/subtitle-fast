@@ -12,6 +12,12 @@ struct ColorOption {
     color: Rgba,
 }
 
+#[derive(Clone, Copy)]
+enum PopupDirection {
+    Down,
+    Up,
+}
+
 pub struct ColorPicker {
     open: bool,
     selected: usize,
@@ -206,7 +212,7 @@ impl Render for ColorPicker {
         let button_wrapper = div()
             .on_children_prepainted(move |bounds, _window, cx| {
                 let bounds = bounds.first().copied();
-                let _ = handle.update(cx, |this, _cx| {
+                handle.update(cx, |this, _cx| {
                     this.button_bounds = bounds;
                 });
             })
@@ -218,6 +224,30 @@ impl Render for ColorPicker {
             .child(button_wrapper);
 
         if self.open {
+            let popup_row_height = 24.0;
+            let popup_divider_height = 1.0;
+            let popup_height = if options.is_empty() {
+                0.0
+            } else {
+                options.len() as f32 * popup_row_height
+                    + (options.len() as f32 - 1.0) * popup_divider_height
+            };
+            let popup_offset_f: f32 = popup_offset.into();
+            let direction = if let Some(button_bounds) = self.button_bounds {
+                let window_bounds = window.bounds();
+                let below_space: f32 = (window_bounds.bottom() - button_bounds.bottom()).into();
+                let above_space: f32 = (button_bounds.top() - window_bounds.top()).into();
+                if below_space < popup_height + popup_offset_f
+                    && above_space >= popup_height + popup_offset_f
+                {
+                    PopupDirection::Up
+                } else {
+                    PopupDirection::Down
+                }
+            } else {
+                PopupDirection::Down
+            };
+
             let handle = cx.entity();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, _window, cx| {
                 if phase != DispatchPhase::Capture {
@@ -227,16 +257,16 @@ impl Render for ColorPicker {
                     return;
                 }
                 let position = event.position;
-                let _ = handle.update(cx, |this, cx| {
+                handle.update(cx, |this, cx| {
                     if !this.open {
                         return;
                     }
                     if let Some(bounds) = this.popup_bounds {
                         if !bounds.contains(&position) {
-                            if let Some(button_bounds) = this.button_bounds {
-                                if button_bounds.contains(&position) {
-                                    return;
-                                }
+                            if let Some(button_bounds) = this.button_bounds
+                                && button_bounds.contains(&position)
+                            {
+                                return;
                             }
                             this.close(cx);
                         }
@@ -249,10 +279,15 @@ impl Render for ColorPicker {
                 });
             });
 
+            let popup_top = match direction {
+                PopupDirection::Down => popup_offset,
+                PopupDirection::Up => px(-(popup_height + popup_offset_f)),
+            };
+
             let mut popup = div()
                 .id(("color-picker-popup", cx.entity_id()))
                 .absolute()
-                .top(popup_offset)
+                .top(popup_top)
                 .left(popup_left)
                 .w(popup_width)
                 .bg(popup_bg)
@@ -267,10 +302,9 @@ impl Render for ColorPicker {
                 }])
                 .occlude();
 
-            let tail = div()
+            let mut tail = div()
                 .id(("color-picker-tail", cx.entity_id()))
                 .absolute()
-                .top(px(-7.0))
                 .left(tail_left)
                 .w(tail_width)
                 .h(tail_height)
@@ -286,10 +320,12 @@ impl Render for ColorPicker {
                             radius_f = radius_f.min(height_f);
 
                             let apex_x = left_f + width_f * 0.5;
-                            let apex_y = top_f;
                             let bottom_left_f = left_f;
                             let bottom_right_f = left_f + width_f;
-                            let bottom_y_f = top_f + height_f;
+                            let (apex_y, bottom_y_f) = match direction {
+                                PopupDirection::Down => (top_f, top_f + height_f),
+                                PopupDirection::Up => (top_f + height_f, top_f),
+                            };
 
                             let left_dx = bottom_left_f - apex_x;
                             let left_dy = bottom_y_f - apex_y;
@@ -329,6 +365,11 @@ impl Render for ColorPicker {
                     )
                     .size_full(),
                 );
+
+            tail = match direction {
+                PopupDirection::Down => tail.top(px(-7.0)),
+                PopupDirection::Up => tail.bottom(px(-7.0)),
+            };
 
             popup = popup.child(tail);
 
@@ -392,7 +433,7 @@ impl Render for ColorPicker {
             let popup_host = div()
                 .on_children_prepainted(move |bounds, _window, cx| {
                     let bounds = bounds.first().copied();
-                    let _ = handle.update(cx, |this, _cx| {
+                    handle.update(cx, |this, _cx| {
                         this.popup_bounds = bounds;
                     });
                 })

@@ -28,11 +28,13 @@ pub enum ConfirmDialogButtonStyle {
     Danger,
 }
 
+type ConfirmDialogCallback = Arc<dyn Fn(&mut Window, &mut Context<ConfirmDialog>)>;
+
 pub struct ConfirmDialogButton {
     pub label: SharedString,
     pub style: ConfirmDialogButtonStyle,
     pub close_on_click: bool,
-    pub on_click: Arc<dyn Fn(&mut Window, &mut Context<ConfirmDialog>)>,
+    pub on_click: ConfirmDialogCallback,
 }
 
 impl ConfirmDialogButton {
@@ -40,7 +42,7 @@ impl ConfirmDialogButton {
         label: impl Into<SharedString>,
         style: ConfirmDialogButtonStyle,
         close_on_click: bool,
-        on_click: Arc<dyn Fn(&mut Window, &mut Context<ConfirmDialog>)>,
+        on_click: ConfirmDialogCallback,
     ) -> Self {
         Self {
             label: label.into(),
@@ -62,6 +64,12 @@ pub struct ConfirmDialogConfig {
 
 pub struct ConfirmDialog {
     config: Option<ConfirmDialogConfig>,
+}
+
+impl Default for ConfirmDialog {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConfirmDialog {

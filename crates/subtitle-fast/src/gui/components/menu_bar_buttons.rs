@@ -8,11 +8,15 @@ use crate::gui::icons::{Icon, icon_sm};
 const MENU_BUTTON_HEIGHT: f32 = 28.0;
 const MENU_BUTTON_RADIUS: f32 = 6.0;
 
+type MenuButtonClick = Arc<dyn Fn(usize, &mut Window, &mut App) + Send + Sync>;
+type MenuButtonBounds = Arc<dyn Fn(usize, Option<Bounds<Pixels>>, &mut App) + Send + Sync>;
+type MenuBarBounds = Arc<dyn Fn(Option<Bounds<Pixels>>, &mut App) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct MenuBarButtonsCallbacks {
-    pub on_button_click: Arc<dyn Fn(usize, &mut Window, &mut App) + Send + Sync>,
-    pub on_button_bounds: Arc<dyn Fn(usize, Option<Bounds<Pixels>>, &mut App) + Send + Sync>,
-    pub on_bar_bounds: Arc<dyn Fn(Option<Bounds<Pixels>>, &mut App) + Send + Sync>,
+    pub on_button_click: MenuButtonClick,
+    pub on_button_bounds: MenuButtonBounds,
+    pub on_bar_bounds: MenuBarBounds,
 }
 
 #[derive(IntoElement)]

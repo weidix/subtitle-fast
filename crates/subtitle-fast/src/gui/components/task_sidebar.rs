@@ -22,12 +22,16 @@ use super::DetectionRunState;
 const PROGRESS_STEP: f64 = 0.001;
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(500);
 
+type TaskSidebarCallback =
+    Arc<dyn Fn(SessionId, &mut Window, &mut Context<TaskSidebar>) + Send + Sync>;
+type TaskSidebarWindowCallback = Arc<dyn Fn(&mut Window, &mut Context<TaskSidebar>) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct TaskSidebarCallbacks {
-    pub on_add: Arc<dyn Fn(&mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
-    pub on_select: Arc<dyn Fn(SessionId, &mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
-    pub on_cancel: Arc<dyn Fn(SessionId, &mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
-    pub on_remove: Arc<dyn Fn(SessionId, &mut Window, &mut Context<TaskSidebar>) + Send + Sync>,
+    pub on_add: TaskSidebarWindowCallback,
+    pub on_select: TaskSidebarCallback,
+    pub on_cancel: TaskSidebarCallback,
+    pub on_remove: TaskSidebarCallback,
 }
 
 struct ProgressListener {
@@ -161,11 +165,9 @@ impl TaskSidebar {
                         if running
                             && !completed
                             && Instant::now().duration_since(last_progress_change_at) >= PROGRESS_THROTTLE
-                        {
-                            if notify_tx.unbounded_send(()).is_err() {
+                            && notify_tx.unbounded_send(()).is_err() {
                                 break;
                             }
-                        }
                     }
                 }
             }
@@ -337,9 +339,7 @@ impl Render for TaskSidebar {
                 let cancel_enabled =
                     run_state.is_running() || run_state == DetectionRunState::Paused;
 
-                let icon_color = if is_active {
-                    hsla(0.0, 0.0, 1.0, 1.0)
-                } else if is_running || completed {
+                let icon_color = if is_active || is_running || completed {
                     hsla(0.0, 0.0, 1.0, 1.0)
                 } else {
                     item_subtle
@@ -524,7 +524,7 @@ impl Render for TaskSidebar {
             .child(list)
             .on_children_prepainted(move |bounds, _window, cx| {
                 let bounds = bounds.first().copied();
-                let _ = handle.update(cx, |this, _| {
+                handle.update(cx, |this, _| {
                     this.set_container_bounds(bounds);
                 });
             });

@@ -66,6 +66,12 @@ impl SeekDragState {
     }
 }
 
+impl Default for VideoControls {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VideoControls {
     const SEEK_THROTTLE: Duration = Duration::from_millis(100);
     const RELEASE_EPSILON: f32 = 0.002;
@@ -198,9 +204,7 @@ impl VideoControls {
     }
 
     fn progress_ratio_from_position(&self, position: Point<Pixels>) -> Option<f32> {
-        let Some(bounds) = self.seek.progress_bounds else {
-            return None;
-        };
+        let bounds = self.seek.progress_bounds?;
         if bounds.size.width.is_zero() {
             return None;
         }
@@ -221,15 +225,14 @@ impl VideoControls {
         };
 
         let snapshot = info.snapshot();
-        if snapshot.metadata.duration.is_some() {
-            if let Some(duration) = snapshot.metadata.duration {
-                if duration > Duration::ZERO {
-                    let target = duration.as_secs_f64() * ratio as f64;
-                    if target.is_finite() && target >= 0.0 {
-                        controls.seek_to(Duration::from_secs_f64(target));
-                        return true;
-                    }
-                }
+        if snapshot.metadata.duration.is_some()
+            && let Some(duration) = snapshot.metadata.duration
+            && duration > Duration::ZERO
+        {
+            let target = duration.as_secs_f64() * ratio as f64;
+            if target.is_finite() && target >= 0.0 {
+                controls.seek_to(Duration::from_secs_f64(target));
+                return true;
             }
         }
 
@@ -256,12 +259,11 @@ impl VideoControls {
         let Some(ratio) = ratio else {
             return;
         };
-        if !force {
-            if let Some(last) = self.seek.last_seek_at {
-                if now.duration_since(last) < Self::SEEK_THROTTLE {
-                    return;
-                }
-            }
+        if !force
+            && let Some(last) = self.seek.last_seek_at
+            && now.duration_since(last) < Self::SEEK_THROTTLE
+        {
+            return;
         }
         if self.seek_from_ratio(ratio) {
             self.seek.last_seek_at = Some(now);
@@ -379,7 +381,7 @@ impl Render for VideoControls {
                 if phase != DispatchPhase::Capture {
                     return;
                 }
-                let _ = handle.update(cx, |this, cx| {
+                handle.update(cx, |this, cx| {
                     this.update_seek_drag(event.position, cx);
                 });
                 window.refresh();
@@ -391,7 +393,7 @@ impl Render for VideoControls {
                     return;
                 }
                 if event.button == MouseButton::Left {
-                    let _ = handle.update(cx, |this, cx| {
+                    handle.update(cx, |this, cx| {
                         this.end_seek_drag(event.position, cx);
                     });
                     window.refresh();
@@ -413,10 +415,9 @@ impl Render for VideoControls {
                 current_time = timestamp;
             } else if let (Some(frame_index), Some(fps)) =
                 (snapshot.last_frame_index, snapshot.metadata.fps)
+                && fps > 0.0
             {
-                if fps > 0.0 {
-                    current_time = Duration::from_secs_f64(frame_index as f64 / fps);
-                }
+                current_time = Duration::from_secs_f64(frame_index as f64 / fps);
             }
 
             if let Some(duration) = snapshot.metadata.duration {
@@ -424,10 +425,9 @@ impl Render for VideoControls {
             } else if let (Some(total), Some(fps)) = (
                 snapshot.metadata.calculate_total_frames(),
                 snapshot.metadata.fps,
-            ) {
-                if fps > 0.0 {
-                    total_time = Duration::from_secs_f64(total as f64 / fps);
-                }
+            ) && fps > 0.0
+            {
+                total_time = Duration::from_secs_f64(total as f64 / fps);
             }
 
             if let Some(frame_index) = snapshot.last_frame_index {
@@ -447,13 +447,13 @@ impl Render for VideoControls {
         };
 
         let mut preview_ratio = self.seek.drag_ratio;
-        if preview_ratio.is_none() {
-            if let Some(pending) = self.seek.pending_ratio {
-                if (actual_progress - pending).abs() <= Self::RELEASE_EPSILON {
-                    self.seek.pending_ratio = None;
-                } else {
-                    preview_ratio = Some(pending);
-                }
+        if preview_ratio.is_none()
+            && let Some(pending) = self.seek.pending_ratio
+        {
+            if (actual_progress - pending).abs() <= Self::RELEASE_EPSILON {
+                self.seek.pending_ratio = None;
+            } else {
+                preview_ratio = Some(pending);
             }
         }
 
@@ -672,7 +672,7 @@ impl Render for VideoControls {
                 .items_center()
                 .on_children_prepainted(move |bounds, _window, cx| {
                     let bounds = bounds.first().copied();
-                    let _ = handle.update(cx, |this, _| {
+                    handle.update(cx, |this, _| {
                         this.update_progress_bounds(bounds);
                     });
                 })
@@ -938,12 +938,13 @@ fn current_time_from_snapshot(snapshot: &VideoPlayerInfoSnapshot) -> Option<Dura
     if let Some(timestamp) = snapshot.last_timestamp {
         return Some(timestamp);
     }
-    if let (Some(frame_index), Some(fps)) = (snapshot.last_frame_index, snapshot.metadata.fps) {
-        if fps.is_finite() && fps > 0.0 {
-            let seconds = frame_index as f64 / fps;
-            if seconds.is_finite() && seconds >= 0.0 {
-                return Some(Duration::from_secs_f64(seconds));
-            }
+    if let (Some(frame_index), Some(fps)) = (snapshot.last_frame_index, snapshot.metadata.fps)
+        && fps.is_finite()
+        && fps > 0.0
+    {
+        let seconds = frame_index as f64 / fps;
+        if seconds.is_finite() && seconds >= 0.0 {
+            return Some(Duration::from_secs_f64(seconds));
         }
     }
     None
@@ -953,24 +954,25 @@ fn current_frame_from_snapshot(snapshot: &VideoPlayerInfoSnapshot) -> Option<u64
     if let Some(frame_index) = snapshot.last_frame_index {
         return Some(frame_index);
     }
-    if let (Some(timestamp), Some(fps)) = (snapshot.last_timestamp, snapshot.metadata.fps) {
-        if fps.is_finite() && fps > 0.0 {
-            let frame = timestamp.as_secs_f64() * fps;
-            if frame.is_finite() && frame >= 0.0 {
-                return Some(frame.round() as u64);
-            }
+    if let (Some(timestamp), Some(fps)) = (snapshot.last_timestamp, snapshot.metadata.fps)
+        && fps.is_finite()
+        && fps > 0.0
+    {
+        let frame = timestamp.as_secs_f64() * fps;
+        if frame.is_finite() && frame >= 0.0 {
+            return Some(frame.round() as u64);
         }
     }
     None
 }
 
 fn max_time_seconds(snapshot: &VideoPlayerInfoSnapshot) -> Option<f64> {
-    if let Some(duration) = snapshot.metadata.duration {
-        if duration > Duration::ZERO {
-            let seconds = duration.as_secs_f64();
-            if seconds.is_finite() && seconds > 0.0 {
-                return Some(seconds);
-            }
+    if let Some(duration) = snapshot.metadata.duration
+        && duration > Duration::ZERO
+    {
+        let seconds = duration.as_secs_f64();
+        if seconds.is_finite() && seconds > 0.0 {
+            return Some(seconds);
         }
     }
 
@@ -989,57 +991,57 @@ fn preview_from_ratio(ratio: f32, metadata: VideoMetadata) -> (Option<Duration>,
     let ratio = ratio.clamp(0.0, 1.0) as f64;
     let total_frames = metadata.calculate_total_frames();
 
-    if let Some(duration) = metadata.duration {
-        if duration > Duration::ZERO {
-            let seconds = duration.as_secs_f64() * ratio;
-            if seconds.is_finite() && seconds >= 0.0 {
-                let time = Duration::from_secs_f64(seconds);
-                let frame = if let Some(fps) = metadata.fps {
-                    if fps.is_finite() && fps > 0.0 {
-                        let frame = seconds * fps;
-                        if frame.is_finite() && frame >= 0.0 {
-                            Some(frame.round() as u64)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    total_frames.and_then(|total| {
-                        if total > 0 {
-                            let max_index = total.saturating_sub(1);
-                            let target = (ratio * max_index as f64).round();
-                            Some(target.clamp(0.0, max_index as f64) as u64)
-                        } else {
-                            None
-                        }
-                    })
-                };
-                return (Some(time), frame);
-            }
-        }
-    }
-
-    if let Some(total) = total_frames {
-        if total > 0 {
-            let max_index = total.saturating_sub(1);
-            let target = (ratio * max_index as f64).round();
-            let frame = target.clamp(0.0, max_index as f64) as u64;
-            let time = metadata.fps.and_then(|fps| {
+    if let Some(duration) = metadata.duration
+        && duration > Duration::ZERO
+    {
+        let seconds = duration.as_secs_f64() * ratio;
+        if seconds.is_finite() && seconds >= 0.0 {
+            let time = Duration::from_secs_f64(seconds);
+            let frame = if let Some(fps) = metadata.fps {
                 if fps.is_finite() && fps > 0.0 {
-                    let seconds = frame as f64 / fps;
-                    if seconds.is_finite() && seconds >= 0.0 {
-                        Some(Duration::from_secs_f64(seconds))
+                    let frame = seconds * fps;
+                    if frame.is_finite() && frame >= 0.0 {
+                        Some(frame.round() as u64)
                     } else {
                         None
                     }
                 } else {
                     None
                 }
-            });
-            return (time, Some(frame));
+            } else {
+                total_frames.and_then(|total| {
+                    if total > 0 {
+                        let max_index = total.saturating_sub(1);
+                        let target = (ratio * max_index as f64).round();
+                        Some(target.clamp(0.0, max_index as f64) as u64)
+                    } else {
+                        None
+                    }
+                })
+            };
+            return (Some(time), frame);
         }
+    }
+
+    if let Some(total) = total_frames
+        && total > 0
+    {
+        let max_index = total.saturating_sub(1);
+        let target = (ratio * max_index as f64).round();
+        let frame = target.clamp(0.0, max_index as f64) as u64;
+        let time = metadata.fps.and_then(|fps| {
+            if fps.is_finite() && fps > 0.0 {
+                let seconds = frame as f64 / fps;
+                if seconds.is_finite() && seconds >= 0.0 {
+                    Some(Duration::from_secs_f64(seconds))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        return (time, Some(frame));
     }
 
     (None, None)

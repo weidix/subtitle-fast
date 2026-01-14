@@ -40,6 +40,7 @@ pub struct VideoPlayerControlHandle {
 pub struct VideoOpenOptions {
     pub paused: bool,
     pub start_frame: Option<u64>,
+    pub backend: Option<Backend>,
 }
 
 impl VideoOpenOptions {
@@ -47,6 +48,7 @@ impl VideoOpenOptions {
         Self {
             paused: true,
             start_frame: None,
+            backend: None,
         }
     }
 }
@@ -380,6 +382,7 @@ struct SeekTiming {
 
 struct PlayerCommandContext<'a> {
     input_path: &'a mut Option<PathBuf>,
+    backend: &'a mut Backend,
     paused: &'a mut bool,
     prime_first_frame: &'a mut bool,
     has_frame: &'a mut bool,
@@ -462,6 +465,9 @@ fn handle_command(
         }
         PlayerCommand::Open(path, options) => {
             *ctx.input_path = Some(path);
+            if let Some(backend) = options.backend {
+                *ctx.backend = backend;
+            }
             *ctx.paused = options.paused;
             *ctx.prime_first_frame = options.paused;
             *ctx.has_frame = false;
@@ -577,7 +583,7 @@ fn spawn_decoder(
             return;
         }
 
-        let backend = available[0];
+        let mut backend = available[0];
         let mut input_path: Option<PathBuf> = None;
         let mut session: Option<DecoderSession> = None;
         let mut open_requested = false;
@@ -648,6 +654,7 @@ fn spawn_decoder(
                     let mut refresh_cached = false;
                     let mut ctx = PlayerCommandContext {
                         input_path: &mut input_path,
+                        backend: &mut backend,
                         paused: &mut paused,
                         prime_first_frame: &mut prime_first_frame,
                         has_frame: &mut has_frame,
@@ -697,6 +704,7 @@ fn spawn_decoder(
                     let mut refresh_cached = false;
                     let mut ctx = PlayerCommandContext {
                         input_path: &mut input_path,
+                        backend: &mut backend,
                         paused: &mut paused,
                         prime_first_frame: &mut prime_first_frame,
                         has_frame: &mut has_frame,
@@ -740,6 +748,7 @@ fn spawn_decoder(
                     let mut refresh_cached = false;
                     let mut ctx = PlayerCommandContext {
                         input_path: &mut input_path,
+                        backend: &mut backend,
                         paused: &mut paused,
                         prime_first_frame: &mut prime_first_frame,
                         has_frame: &mut has_frame,

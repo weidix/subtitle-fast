@@ -60,6 +60,10 @@ fn active_main_window(cx: &mut App) -> Option<WindowHandle<MainWindow>> {
         .and_then(|window| window.downcast::<MainWindow>())
 }
 
+pub(crate) fn main_window_handle(cx: &mut App) -> Option<WindowHandle<MainWindow>> {
+    active_main_window(cx)
+}
+
 /// Registers handlers for app-wide menu actions.
 pub fn register_actions(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.quit());

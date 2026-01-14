@@ -51,6 +51,7 @@ pub struct VideoToolbar {
     slide_token: u64,
     highlight_visible: bool,
     validator_overlay_visible: bool,
+    detector_kind: SubtitleDetectorKind,
 }
 
 impl Default for VideoToolbar {
@@ -77,6 +78,7 @@ impl VideoToolbar {
             slide_token: 0,
             highlight_visible: false,
             validator_overlay_visible: false,
+            detector_kind: SubtitleDetectorKind::ProjectionBand,
         }
     }
 
@@ -94,6 +96,15 @@ impl VideoToolbar {
         self.set_roi_visible(state.roi_visible, cx);
         self.set_highlight_visible(state.highlight_visible, cx);
         self.set_validator_overlay_visible(state.validator_overlay_visible, cx);
+    }
+
+    pub fn set_detector_kind(&mut self, kind: SubtitleDetectorKind, cx: &mut Context<Self>) {
+        if self.detector_kind == kind {
+            return;
+        }
+        self.detector_kind = kind;
+        self.sync_frame_preprocessor();
+        cx.notify();
     }
 
     pub fn set_controls(
@@ -206,6 +217,7 @@ impl VideoToolbar {
                         validator: self.validator_overlay_visible,
                         grayscale,
                     },
+                    self.detector_kind,
                 ),
             );
             return;
@@ -674,6 +686,7 @@ struct ValidatorOverlayState {
     dims: Option<(usize, usize, usize)>,
     roi: Option<subtitle_fast_types::RoiConfig>,
     luma_band: Option<(u8, u8)>,
+    detector_kind: Option<SubtitleDetectorKind>,
     init_error_logged: bool,
 }
 
@@ -684,6 +697,7 @@ impl ValidatorOverlayState {
             dims: None,
             roi: None,
             luma_band: None,
+            detector_kind: None,
             init_error_logged: false,
         }
     }
@@ -693,6 +707,7 @@ impl ValidatorOverlayState {
         frame: &VideoFrame,
         roi: subtitle_fast_types::RoiConfig,
         luma: VideoLumaValues,
+        detector_kind: SubtitleDetectorKind,
     ) -> Option<SubtitleDetectionResult> {
         let dims = (
             frame.width() as usize,
@@ -703,11 +718,13 @@ impl ValidatorOverlayState {
         let needs_rebuild = self.detector.is_none()
             || self.dims != Some(dims)
             || self.roi != Some(roi)
-            || self.luma_band != Some(luma_band);
+            || self.luma_band != Some(luma_band)
+            || self.detector_kind != Some(detector_kind);
         if needs_rebuild {
             self.dims = Some(dims);
             self.roi = Some(roi);
             self.luma_band = Some(luma_band);
+            self.detector_kind = Some(detector_kind);
             self.init_error_logged = false;
             let mut config = SubtitleDetectionConfig::for_frame(dims.0, dims.1, dims.2);
             config.roi = roi;
@@ -715,7 +732,7 @@ impl ValidatorOverlayState {
                 target: luma.target,
                 delta: luma.delta,
             };
-            match build_detector(SubtitleDetectorKind::ProjectionBand, config) {
+            match build_detector(detector_kind, config) {
                 Ok(detector) => {
                     self.detector = Some(detector);
                 }
@@ -748,6 +765,7 @@ fn frame_overlay_preprocessor(
     color_handle: ColorPickerHandle,
     roi_handle: VideoRoiHandle,
     options: OverlayOptions,
+    detector_kind: SubtitleDetectorKind,
 ) -> FramePreprocessor {
     let validator_state = Arc::new(Mutex::new(ValidatorOverlayState::new()));
     Arc::new(move |y_plane, uv_plane, info| {
@@ -784,7 +802,7 @@ fn frame_overlay_preprocessor(
                 let mut state = validator_state
                     .lock()
                     .expect("validator overlay mutex poisoned");
-                state.detect(&frame, roi, values)
+                state.detect(&frame, roi, values, detector_kind)
             } else {
                 None
             }

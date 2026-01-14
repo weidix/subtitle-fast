@@ -35,6 +35,7 @@ impl Detector {
         detection_options.luma_band.target = settings.target;
         detection_options.luma_band.delta = settings.delta;
         detection_options.roi = settings.roi;
+        detection_options.detector = settings.detector;
 
         let config = FrameValidatorConfig {
             detection: detection_options,

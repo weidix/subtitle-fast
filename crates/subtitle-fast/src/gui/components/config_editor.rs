@@ -18,6 +18,7 @@ use gpui::{
 
 use crate::gui::components::Titlebar;
 use crate::gui::icons::{Icon, icon_sm};
+use crate::gui::menus;
 use crate::settings::{
     self, DecoderFileConfig, DetectionFileConfig, FileConfig, OcrFileConfig, OutputFileConfig,
     RoiFileConfig,
@@ -198,6 +199,7 @@ impl ConfigWindow {
         let detection_target = parse_optional_u8("detection.target", &values.target)?;
         let detection_delta = parse_optional_u8("detection.delta", &values.delta)?;
 
+        let detector = normalize_optional(&values.detector_backend);
         let comparator = normalize_optional(&values.comparator);
         let roi = parse_roi_fields(
             &values.roi_x,
@@ -215,6 +217,7 @@ impl ConfigWindow {
         let detection = if detection_sps.is_some()
             || detection_target.is_some()
             || detection_delta.is_some()
+            || detector.is_some()
             || comparator.is_some()
             || roi.is_some()
         {
@@ -222,6 +225,7 @@ impl ConfigWindow {
                 samples_per_second: detection_sps,
                 target: detection_target,
                 delta: detection_delta,
+                detector,
                 comparator,
                 roi,
             })
@@ -271,6 +275,7 @@ impl ConfigWindow {
         };
 
         let values = self.fields.read_values(cx);
+        let detector_changed = values.detector_backend != self.last_saved_values.detector_backend;
         let mut config = Self::build_config_from_values(&values)?;
         config.output = self.output_path.as_ref().map(|path| OutputFileConfig {
             path: Some(path.clone()),
@@ -309,11 +314,25 @@ impl ConfigWindow {
         }
 
         self.last_saved_values = values;
+        if detector_changed {
+            self.notify_detector_backend_change(cx);
+        }
         if self.status.is_some() {
             self.status = None;
             cx.notify();
         }
         Ok(())
+    }
+
+    fn notify_detector_backend_change(&self, cx: &mut Context<Self>) {
+        cx.defer(|cx| {
+            let Some(window) = menus::main_window_handle(cx) else {
+                return;
+            };
+            let _ = window.update(cx, |main_window, _window, cx| {
+                main_window.refresh_detector_backend(cx);
+            });
+        });
     }
 
     fn write_defaults(
@@ -362,6 +381,11 @@ impl ConfigWindow {
         subscriptions.push(cx.observe(&self.fields.comparator, |this, _input, cx| {
             this.handle_autosave(cx);
         }));
+        subscriptions.push(
+            cx.observe(&self.fields.detector_backend, |this, _input, cx| {
+                this.handle_autosave(cx);
+            }),
+        );
         subscriptions.push(
             cx.observe(&self.fields.decoder_backend, |this, _input, cx| {
                 this.handle_autosave(cx);
@@ -449,6 +473,7 @@ impl ConfigWindow {
     fn close_open_selects(&mut self, cx: &mut Context<Self>) {
         let selects = [
             self.fields.comparator.clone(),
+            self.fields.detector_backend.clone(),
             self.fields.decoder_backend.clone(),
             self.fields.ocr_backend.clone(),
         ];
@@ -463,6 +488,7 @@ impl ConfigWindow {
     fn has_open_select(&self, cx: &Context<Self>) -> bool {
         let selects = [
             self.fields.comparator.clone(),
+            self.fields.detector_backend.clone(),
             self.fields.decoder_backend.clone(),
             self.fields.ocr_backend.clone(),
         ];
@@ -473,6 +499,7 @@ impl ConfigWindow {
         self.select_popup_bounds = None;
         let selects = [
             self.fields.comparator.clone(),
+            self.fields.detector_backend.clone(),
             self.fields.decoder_backend.clone(),
             self.fields.ocr_backend.clone(),
         ];
@@ -732,6 +759,9 @@ impl ConfigWindow {
                 self.fields.delta.clone(),
                 self.field_errors.delta.clone(),
             ))
+            .child(
+                self.render_select_field("Detection backend", self.fields.detector_backend.clone()),
+            )
             .child(self.render_select_field("Detection comparator", self.fields.comparator.clone()))
             .child(self.render_roi_row())
             .child(self.render_select_field("Decoder backend", self.fields.decoder_backend.clone()))
@@ -999,6 +1029,7 @@ impl Render for ConfigWindow {
                     if !inside {
                         let selects = [
                             this.fields.comparator.clone(),
+                            this.fields.detector_backend.clone(),
                             this.fields.decoder_backend.clone(),
                             this.fields.ocr_backend.clone(),
                         ];
@@ -1060,6 +1091,7 @@ struct ConfigValues {
     sps: SharedString,
     target: SharedString,
     delta: SharedString,
+    detector_backend: SharedString,
     comparator: SharedString,
     roi_x: SharedString,
     roi_y: SharedString,
@@ -1076,6 +1108,7 @@ impl ConfigValues {
             sps: "7".into(),
             target: "230".into(),
             delta: "12".into(),
+            detector_backend: "".into(),
             comparator: "".into(),
             roi_x: "0.15".into(),
             roi_y: "0.8".into(),
@@ -1098,6 +1131,9 @@ impl ConfigValues {
             }
             if let Some(delta) = det.delta {
                 values.delta = delta.to_string().into();
+            }
+            if let Some(detector) = det.detector {
+                values.detector_backend = detector.into();
             }
             if let Some(comparator) = det.comparator {
                 values.comparator = comparator.into();
@@ -1141,6 +1177,7 @@ struct ConfigFields {
     sps: Entity<TextInput>,
     target: Entity<TextInput>,
     delta: Entity<TextInput>,
+    detector_backend: Entity<SelectInput>,
     comparator: Entity<SelectInput>,
     roi_x: Entity<TextInput>,
     roi_y: Entity<TextInput>,
@@ -1158,6 +1195,7 @@ impl ConfigFields {
             SelectOption::new("bitset-cover", "bitset-cover"),
             SelectOption::new("sparse-chamfer", "sparse-chamfer"),
         ];
+        let detector_backend_options = detector_backend_options();
         let decoder_backend_options = decoder_backend_options();
         let ocr_backend_options = ocr_backend_options();
 
@@ -1165,6 +1203,7 @@ impl ConfigFields {
             sps: cx.new(|cx| TextInput::new(cx, "7", InputKind::Integer)),
             target: cx.new(|cx| TextInput::new(cx, "230", InputKind::Integer)),
             delta: cx.new(|cx| TextInput::new(cx, "12", InputKind::Integer)),
+            detector_backend: cx.new(|_| SelectInput::new(detector_backend_options, "")),
             comparator: cx.new(|_| SelectInput::new(comparator_options, "")),
             roi_x: cx.new(|cx| TextInput::new(cx, "0.15", InputKind::Float)),
             roi_y: cx.new(|cx| TextInput::new(cx, "0.8", InputKind::Float)),
@@ -1191,6 +1230,7 @@ impl ConfigFields {
         update(&self.sps, values.sps, cx);
         update(&self.target, values.target, cx);
         update(&self.delta, values.delta, cx);
+        update_select(&self.detector_backend, values.detector_backend, cx);
         update_select(&self.comparator, values.comparator, cx);
         update(&self.roi_x, values.roi_x, cx);
         update(&self.roi_y, values.roi_y, cx);
@@ -1212,6 +1252,7 @@ impl ConfigFields {
             sps: read(&self.sps, cx),
             target: read(&self.target, cx),
             delta: read(&self.delta, cx),
+            detector_backend: read_select(&self.detector_backend, cx),
             comparator: read_select(&self.comparator, cx),
             roi_x: read(&self.roi_x, cx),
             roi_y: read(&self.roi_y, cx),
@@ -1233,6 +1274,18 @@ fn decoder_backend_options() -> Vec<SelectOption> {
             continue;
         }
         options.push(SelectOption::new(name, name));
+    }
+    options
+}
+
+fn detector_backend_options() -> Vec<SelectOption> {
+    let mut options = vec![SelectOption::new("Default", "")];
+    options.push(SelectOption::new("auto", "auto"));
+    options.push(SelectOption::new("projection-band", "projection-band"));
+    options.push(SelectOption::new("integral-band", "integral-band"));
+    #[cfg(all(feature = "detector-vision", target_os = "macos"))]
+    {
+        options.push(SelectOption::new("macos-vision", "macos-vision"));
     }
     options
 }

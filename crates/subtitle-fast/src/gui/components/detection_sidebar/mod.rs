@@ -18,7 +18,9 @@ use crate::stage::{
 };
 use subtitle_fast_decoder::{Backend, Configuration};
 use subtitle_fast_types::{DecoderError, RoiConfig};
-use subtitle_fast_validator::subtitle_detection::{DEFAULT_DELTA, DEFAULT_TARGET};
+use subtitle_fast_validator::subtitle_detection::{
+    DEFAULT_DELTA, DEFAULT_TARGET, SubtitleDetectorKind,
+};
 
 pub mod controls;
 pub mod host;
@@ -381,10 +383,14 @@ impl DetectionPipelineInner {
 
     fn current_detection_settings(&self) -> DetectionSettings {
         let (target, delta, roi) = self.current_detection_overrides();
+        let detector = crate::settings::resolve_gui_settings()
+            .map(|settings| settings.detection.detector)
+            .unwrap_or(SubtitleDetectorKind::ProjectionBand);
         DetectionSettings {
             samples_per_second: DEFAULT_SAMPLES_PER_SECOND,
             target,
             delta,
+            detector,
             comparator: None,
             roi: Some(roi),
         }

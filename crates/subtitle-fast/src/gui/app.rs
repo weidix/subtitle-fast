@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use subtitle_fast_validator::subtitle_detection::SubtitleDetectorKind;
 use tokio::sync::oneshot;
 
 use crate::gui::components::{
@@ -264,6 +265,11 @@ impl SubtitleFastApp {
             .downcast::<MainWindow>()
             .expect("main window type mismatch")
     }
+}
+
+fn resolve_overlay_detector_kind() -> Option<SubtitleDetectorKind> {
+    let settings = crate::settings::resolve_gui_settings().ok()?;
+    Some(settings.detection.detector)
 }
 
 const SUPPORTED_VIDEO_EXTENSIONS: &[&str] = &[
@@ -865,6 +871,7 @@ impl MainWindow {
         let options = crate::gui::components::video_player::VideoOpenOptions {
             paused: true,
             start_frame: session.last_frame_index,
+            backend: None,
         };
         controls.open_with(session.path.clone(), options);
         self.player = Some(cx.new(|_| player));
@@ -884,6 +891,9 @@ impl MainWindow {
         });
         self.toolbar_view.update(cx, |toolbar_view, cx| {
             toolbar_view.set_controls(Some(controls), cx);
+            if let Some(detector_kind) = resolve_overlay_detector_kind() {
+                toolbar_view.set_detector_kind(detector_kind, cx);
+            }
             if let Some(state) = session.toolbar_state {
                 toolbar_view.restore(state, cx);
             }
@@ -893,6 +903,15 @@ impl MainWindow {
             overlay.set_info_handle(Some(info), session.roi, cx);
         });
         cx.notify();
+    }
+
+    pub(crate) fn refresh_detector_backend(&mut self, cx: &mut Context<Self>) {
+        let Some(detector_kind) = resolve_overlay_detector_kind() else {
+            return;
+        };
+        self.toolbar_view.update(cx, |toolbar_view, cx| {
+            toolbar_view.set_detector_kind(detector_kind, cx);
+        });
     }
 
     fn release_player(&mut self, cx: &mut Context<Self>) {

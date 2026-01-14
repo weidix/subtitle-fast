@@ -8,6 +8,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use subtitle_fast_comparator::ComparatorKind;
 use subtitle_fast_types::RoiConfig;
+use subtitle_fast_validator::subtitle_detection::SubtitleDetectorKind;
 use subtitle_fast_validator::subtitle_detection::{DEFAULT_DELTA, DEFAULT_TARGET};
 
 use crate::cli::{CliArgs, CliSources};
@@ -34,6 +35,7 @@ pub(crate) struct DetectionFileConfig {
     pub(crate) samples_per_second: Option<u32>,
     pub(crate) target: Option<u8>,
     pub(crate) delta: Option<u8>,
+    pub(crate) detector: Option<String>,
     pub(crate) comparator: Option<String>,
     pub(crate) roi: Option<RoiFileConfig>,
 }
@@ -114,6 +116,7 @@ pub struct DetectionSettings {
     pub samples_per_second: u32,
     pub target: u8,
     pub delta: u8,
+    pub detector: SubtitleDetectorKind,
     pub comparator: Option<ComparatorKind>,
     pub roi: Option<RoiConfig>,
 }
@@ -298,6 +301,9 @@ fn merge(
         DEFAULT_DELTA,
     )?;
 
+    let detector_kind =
+        resolve_detector_kind(detection_cfg.detector.clone(), config_path.as_ref())?;
+
     let comparator_kind = resolve_comparator_kind(
         cli.comparator.clone(),
         detection_cfg.comparator.clone(),
@@ -341,6 +347,7 @@ fn merge(
             samples_per_second: detection_samples_per_second,
             target: detector_target,
             delta: detector_delta,
+            detector: detector_kind,
             comparator: comparator_kind,
             roi: Some(detection_roi),
         },
@@ -547,6 +554,30 @@ fn resolve_comparator_kind(
             value,
         }),
     }
+}
+
+fn resolve_detector_kind(
+    file_value: Option<String>,
+    config_path: Option<&PathBuf>,
+) -> Result<SubtitleDetectorKind, ConfigError> {
+    let Some(value) = normalize_string(file_value) else {
+        return Ok(SubtitleDetectorKind::ProjectionBand);
+    };
+    let normalized = value.trim().to_ascii_lowercase();
+    let kind = match normalized.as_str() {
+        "auto" => SubtitleDetectorKind::Auto,
+        "macos-vision" | "vision" => SubtitleDetectorKind::MacVision,
+        "integral-band" | "integral_band" => SubtitleDetectorKind::IntegralBand,
+        "projection-band" | "projection_band" => SubtitleDetectorKind::ProjectionBand,
+        _ => {
+            return Err(ConfigError::InvalidValue {
+                path: config_path.cloned(),
+                field: "detection.detector",
+                value,
+            });
+        }
+    };
+    Ok(kind)
 }
 
 fn resolve_decoder_capacity(

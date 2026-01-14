@@ -19,7 +19,7 @@ impl DetectionSidebarHost {
     fn build_sidebar(handle: DetectionHandle, cx: &mut Context<Self>) -> Entity<DetectionSidebar> {
         let detection_controls_view = cx.new(|_| DetectionControls::new(handle.clone()));
         let detection_metrics_view = cx.new(|_| DetectionMetrics::new(handle.clone()));
-        let detection_subtitles_view = cx.new(|_| DetectedSubtitlesList::new(handle.clone()));
+        let detection_subtitles_view = cx.new(|_| DetectedSubtitlesList::new(handle.clone(), None));
         cx.new(|_| {
             DetectionSidebar::new(
                 handle,

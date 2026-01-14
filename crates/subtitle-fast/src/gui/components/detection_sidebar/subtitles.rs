@@ -1,10 +1,13 @@
+use std::time::Duration;
+
 use futures_util::StreamExt;
 use gpui::prelude::*;
-use gpui::{Context, Render, ScrollHandle, Task, Window, div, hsla, px};
+use gpui::{Context, MouseButton, Render, ScrollHandle, Task, Window, div, hsla, px};
 
 use crate::stage::TimedSubtitle;
 
 use super::{DetectionHandle, SubtitleMessage};
+use crate::gui::components::VideoPlayerControlHandle;
 
 #[derive(Clone, Debug)]
 struct DetectedSubtitleEntry {
@@ -36,10 +39,11 @@ pub struct DetectedSubtitlesList {
     subtitles: Vec<DetectedSubtitleEntry>,
     scroll_handle: ScrollHandle,
     subtitle_task: Option<Task<()>>,
+    controls: Option<VideoPlayerControlHandle>,
 }
 
 impl DetectedSubtitlesList {
-    pub fn new(handle: DetectionHandle) -> Self {
+    pub fn new(handle: DetectionHandle, controls: Option<VideoPlayerControlHandle>) -> Self {
         let snapshot = handle.subtitles_snapshot();
         let mut subtitles = Vec::with_capacity(snapshot.len());
         for subtitle in snapshot {
@@ -51,6 +55,7 @@ impl DetectedSubtitlesList {
             subtitles,
             scroll_handle: ScrollHandle::new(),
             subtitle_task: None,
+            controls,
         }
     }
 
@@ -110,14 +115,40 @@ impl DetectedSubtitlesList {
         }
     }
 
-    fn subtitle_row(&self, entry: &DetectedSubtitleEntry) -> impl IntoElement {
+    fn subtitle_row(
+        &self,
+        entry: &DetectedSubtitleEntry,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let time_color = hsla(0.0, 0.0, 1.0, 0.55);
         let text_color = hsla(0.0, 0.0, 1.0, 0.88);
+        let divider_color = hsla(0.0, 0.0, 1.0, 0.08);
+        let hover_bg = hsla(0.0, 0.0, 1.0, 0.06);
         let time_text = format!(
             "{} - {}",
             format_timestamp(entry.start_ms),
             format_timestamp(entry.end_ms)
         );
+
+        let mut time_row = div()
+            .text_size(px(9.0))
+            .text_color(time_color)
+            .child(time_text);
+
+        if let Some(controls) = self.controls.clone() {
+            let start_ms = entry.start_ms;
+            time_row = time_row
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover_bg))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |_, _, _, _| {
+                        if let Some(target) = seek_target(start_ms) {
+                            controls.seek_to(target);
+                        }
+                    }),
+                );
+        }
 
         div()
             .id(("detection-subtitles-row", entry.id))
@@ -126,14 +157,12 @@ impl DetectedSubtitlesList {
             .gap(px(2.0))
             .w_full()
             .min_w(px(0.0))
-            .py(px(2.0))
+            .pt(px(2.0))
+            .pb(px(6.0))
             .px(px(2.0))
-            .child(
-                div()
-                    .text_size(px(9.0))
-                    .text_color(time_color)
-                    .child(time_text),
-            )
+            .border_b(px(1.0))
+            .border_color(divider_color)
+            .child(time_row)
             .child(
                 div()
                     .min_w(px(0.0))
@@ -177,7 +206,7 @@ impl Render for DetectedSubtitlesList {
                 .py(px(4.0));
 
             for entry in &self.subtitles {
-                rows = rows.child(self.subtitle_row(entry));
+                rows = rows.child(self.subtitle_row(entry, cx));
             }
             rows
         };
@@ -189,7 +218,7 @@ impl Render for DetectedSubtitlesList {
             .flex_1()
             .min_h(px(0.0))
             .overflow_y_scroll()
-            .scrollbar_width(px(6.0))
+            .scrollbar_width(px(8.0))
             .track_scroll(&self.scroll_handle)
             .child(list_body);
 
@@ -201,6 +230,14 @@ impl Render for DetectedSubtitlesList {
             .min_h(px(0.0))
             .child(scroll_area)
     }
+}
+
+fn seek_target(start_ms: f64) -> Option<Duration> {
+    if !start_ms.is_finite() {
+        return None;
+    }
+    let target_ms = (start_ms + 100.0).max(0.0);
+    Some(Duration::from_secs_f64(target_ms / 1000.0))
 }
 
 fn format_timestamp(ms: f64) -> String {

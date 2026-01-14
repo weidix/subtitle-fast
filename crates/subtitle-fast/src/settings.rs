@@ -90,8 +90,19 @@ pub(crate) fn resolve_gui_settings() -> Result<EffectiveSettings, ConfigError> {
     };
     let sources = CliSources::default();
     let (file, config_path) = load_config(None)?;
+    let roi_specified = file
+        .detection
+        .as_ref()
+        .and_then(|detection| detection.roi.as_ref())
+        .is_some_and(|roi| {
+            roi.x.is_some() || roi.y.is_some() || roi.width.is_some() || roi.height.is_some()
+        });
     let resolved = merge(&cli, &sources, file, config_path)?;
-    Ok(resolved.settings)
+    let mut settings = resolved.settings;
+    if !roi_specified {
+        settings.detection.roi = Some(default_gui_roi());
+    }
+    Ok(settings)
 }
 
 #[derive(Debug, Clone)]
@@ -420,6 +431,15 @@ fn full_frame_roi() -> RoiConfig {
         y: 0.0,
         width: 1.0,
         height: 1.0,
+    }
+}
+
+fn default_gui_roi() -> RoiConfig {
+    RoiConfig {
+        x: 0.15,
+        y: 0.80,
+        width: 0.70,
+        height: 0.20,
     }
 }
 

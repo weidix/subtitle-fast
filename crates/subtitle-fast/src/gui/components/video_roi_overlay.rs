@@ -9,8 +9,8 @@ use tokio::sync::watch;
 
 use crate::gui::components::{ColorPicker, ColorPickerHandle, VideoPlayerInfoHandle};
 
-const DEFAULT_LEFT_GAP: f32 = 0.20;
-const DEFAULT_RIGHT_GAP: f32 = 0.20;
+const DEFAULT_LEFT_GAP: f32 = 0.15;
+const DEFAULT_RIGHT_GAP: f32 = 0.15;
 const DEFAULT_BOTTOM_GAP: f32 = 0.00;
 const DEFAULT_HEIGHT: f32 = 0.20;
 const BORDER_WIDTH: f32 = 1.5;

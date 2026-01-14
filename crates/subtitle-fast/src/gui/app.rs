@@ -195,7 +195,7 @@ impl SubtitleFastApp {
                                         return;
                                     };
                                     main_window.update(cx, |this, cx| {
-                                        this.prompt_for_video(window, false, cx);
+                                        this.prompt_for_video(window, true, cx);
                                     });
                                 }),
                                 on_select: Arc::new(move |session_id, _window, cx| {

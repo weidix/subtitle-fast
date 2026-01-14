@@ -103,6 +103,10 @@ pub fn icon_lg(name: Icon, color: Hsla) -> Svg {
     icon_base(name, color).w(px(24.0)).h(px(24.0))
 }
 
+pub fn logo_full_color() -> Img {
+    img(Icon::Logo.path()).object_fit(ObjectFit::Contain)
+}
+
 pub fn icon_button(name: Icon, color: Hsla, hover_bg: Hsla) -> impl IntoElement {
     div()
         .flex()

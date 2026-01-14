@@ -8,7 +8,7 @@ fn main() {
     }));
     let rc_path = manifest_dir.join("resources/windows/app.rc");
     println!("cargo:rerun-if-changed={}", rc_path.display());
-    embed_resource::compile(rc_path, embed_resource::NONE);
+    let _ = embed_resource::compile(rc_path, embed_resource::NONE);
 }
 
 #[cfg(not(windows))]

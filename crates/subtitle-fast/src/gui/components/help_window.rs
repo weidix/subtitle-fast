@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use crate::gui::components::Titlebar;
-use crate::gui::icons::{Icon, icon_md};
+use crate::gui::icons::{Icon, icon_md, logo_full_color};
 
 /// Displays help content and license notices in a dedicated window.
 pub struct HelpWindow {
@@ -49,8 +49,8 @@ impl HelpWindow {
     }
 
     fn hero(&self) -> impl IntoElement {
-        let accent = hsla(28.0, 0.85, 0.6, 1.0);
-        let accent_bg = hsla(28.0, 0.85, 0.6, 0.16);
+        let accent = hsla(0.0, 0.0, 1.0, 1.0);
+        let accent_bg = hsla(0.0, 0.0, 1.0, 0.08);
 
         div()
             .flex()
@@ -65,18 +65,22 @@ impl HelpWindow {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
+                    .gap(px(8.0))
+                    .child(logo_full_color().w(px(72.0)).h(px(72.0)))
                     .child(
                         div()
-                            .text_size(px(18.0))
-                            .text_color(hsla(0.0, 0.0, 0.95, 1.0))
-                            .child("subtitle-fast help"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(hsla(0.0, 0.0, 0.7, 1.0))
-                            .child("From video import to usable subtitles, in a few clear steps."),
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .text_size(px(18.0))
+                                    .text_color(hsla(0.0, 0.0, 0.95, 1.0))
+                                    .child("subtitle-fast help"),
+                            )
+                            .child(div().text_size(px(12.0)).text_color(hsla(0.0, 0.0, 0.7, 1.0)).child(
+                                "From video import to usable subtitles, in a few clear steps.",
+                            )),
                     ),
             )
             .child(
@@ -95,7 +99,7 @@ impl HelpWindow {
                             .bg(accent_bg)
                             .border_1()
                             .border_color(accent)
-                            .child(icon_md(Icon::Logo, hsla(0.0, 0.0, 1.0, 1.0))),
+                            .child(icon_md(Icon::Info, accent)),
                     )
                     .child(
                         div()
@@ -115,6 +119,11 @@ impl HelpWindow {
         accent: Hsla,
         accent_bg: Hsla,
     ) -> impl IntoElement {
+        let card_bg = rgb(0x151515);
+        let card_border = rgb(0x262626);
+        let title_color = hsla(0.0, 0.0, 0.92, 1.0);
+        let subtitle_color = hsla(0.0, 0.0, 0.68, 1.0);
+        let body_color = hsla(0.0, 0.0, 0.78, 1.0);
         let mut body = div().flex().flex_col().gap(px(6.0));
         for line in lines {
             body = body.child(
@@ -134,7 +143,7 @@ impl HelpWindow {
                         div()
                             .flex_1()
                             .text_size(px(12.0))
-                            .text_color(hsla(0.0, 0.0, 0.78, 1.0))
+                            .text_color(body_color)
                             .child(line),
                     ),
             );
@@ -165,13 +174,13 @@ impl HelpWindow {
                     .child(
                         div()
                             .text_size(px(14.0))
-                            .text_color(hsla(0.0, 0.0, 0.92, 1.0))
+                            .text_color(title_color)
                             .child(title),
                     )
                     .child(
                         div()
                             .text_size(px(11.0))
-                            .text_color(hsla(0.0, 0.0, 0.68, 1.0))
+                            .text_color(subtitle_color)
                             .child(subtitle),
                     ),
             );
@@ -182,20 +191,25 @@ impl HelpWindow {
             .gap(px(12.0))
             .p(px(14.0))
             .rounded(px(12.0))
-            .bg(rgb(0x151515))
+            .bg(card_bg)
             .border_1()
-            .border_color(rgb(0x262626))
+            .border_color(card_border)
             .child(header)
             .child(body)
     }
 
     fn notice_card(&self, title: SharedString, lines: Vec<SharedString>) -> impl IntoElement {
+        let card_bg = rgb(0x141414);
+        let card_border = rgb(0x262626);
+        let title_color = hsla(0.0, 0.0, 0.9, 1.0);
+        let subtitle_color = hsla(0.0, 0.0, 0.72, 1.0);
+        let icon_color = hsla(0.0, 0.0, 0.75, 1.0);
         let mut body = div().flex().flex_col().gap(px(6.0));
         for line in lines {
             body = body.child(
                 div()
                     .text_size(px(12.0))
-                    .text_color(hsla(0.0, 0.0, 0.72, 1.0))
+                    .text_color(subtitle_color)
                     .child(line),
             );
         }
@@ -206,19 +220,19 @@ impl HelpWindow {
             .gap(px(10.0))
             .p(px(14.0))
             .rounded(px(12.0))
-            .bg(rgb(0x141414))
+            .bg(card_bg)
             .border_1()
-            .border_color(rgb(0x262626))
+            .border_color(card_border)
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .child(icon_md(Icon::Info, hsla(0.0, 0.0, 0.75, 1.0)))
+                    .child(icon_md(Icon::Info, icon_color))
                     .child(
                         div()
                             .text_size(px(13.0))
-                            .text_color(hsla(0.0, 0.0, 0.9, 1.0))
+                            .text_color(title_color)
                             .child(title),
                     ),
             )
@@ -228,6 +242,8 @@ impl HelpWindow {
 
 impl Render for HelpWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let accent = hsla(0.0, 0.0, 1.0, 1.0);
+        let accent_bg = hsla(0.0, 0.0, 1.0, 0.08);
         let content = div()
             .flex()
             .flex_col()
@@ -242,8 +258,8 @@ impl Render for HelpWindow {
                     "Tune detection thresholds in the right sidebar.".into(),
                     "Run the pipeline and review the candidates.".into(),
                 ],
-                hsla(200.0, 0.7, 0.6, 1.0),
-                hsla(200.0, 0.7, 0.6, 0.16),
+                accent,
+                accent_bg,
             ))
             .child(self.section_card(
                 Icon::SlidersHorizontal,
@@ -255,8 +271,8 @@ impl Render for HelpWindow {
                         .into(),
                     "Switch comparators or decoder backends to balance speed and quality.".into(),
                 ],
-                hsla(150.0, 0.6, 0.55, 1.0),
-                hsla(150.0, 0.6, 0.55, 0.16),
+                accent,
+                accent_bg,
             ))
             .child(self.section_card(
                 Icon::GalleryThumbnails,
@@ -267,8 +283,8 @@ impl Render for HelpWindow {
                     "Adjust settings and rerun to improve difficult scenes.".into(),
                     "Save settings or reload to compare different passes.".into(),
                 ],
-                hsla(28.0, 0.8, 0.6, 1.0),
-                hsla(28.0, 0.8, 0.6, 0.16),
+                accent,
+                accent_bg,
             ))
             .child(self.notice_card(
                 "FFmpeg notice".into(),

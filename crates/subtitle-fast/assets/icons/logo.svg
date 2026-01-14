@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+    <title>Video Search Icon</title>
+
+    <!-- Removed white background to make it transparent -->
+
+    <!-- Card: slightly taller -->
+    <defs>
+        <clipPath id="clipCard">
+            <rect x="92" y="196" width="840" height="632" rx="96" ry="96" />
+        </clipPath>
+    </defs>
+
+    <g clip-path="url(#clipCard)">
+        <!-- Top green / bottom yellow -->
+        <rect x="92" y="196" width="840" height="360" fill="#39A86B" />
+        <rect x="92" y="556" width="840" height="272" fill="#F2C94C" />
+    </g>
+
+    <rect x="92" y="196" width="840" height="632" rx="96" ry="96" fill="none" stroke="#1F2A2E"
+        stroke-opacity="0.10" stroke-width="16" />
+
+    <!-- Play triangle (vertically centered in green area, rounded) -->
+    <!-- Green: y 196..556, center y=376 -->
+    <polygon
+        points="232,304 232,448 352,376"
+        fill="#FFFFFF"
+        stroke="#FFFFFF"
+        stroke-width="28"
+        stroke-linejoin="round"
+        opacity="0.96"
+    />
+
+    <!-- Progress bar (moved down a bit to match taller card) -->
+    <rect x="200" y="708" width="520" height="56" rx="28" fill="#1F2A2E" fill-opacity="0.18" />
+    <rect x="200" y="708" width="300" height="56" rx="28" fill="#1F2A2E" fill-opacity="0.28" />
+    <circle cx="500" cy="736" r="44" fill="#FFD76A" />
+    <circle cx="500" cy="736" r="44" fill="none" stroke="#1F2A2E" stroke-opacity="0.12"
+        stroke-width="12" />
+
+    <!-- Handle neck UNDER the magnifier -->
+    <!-- Lens center (560,434), r=168, angle=35deg => rim approx (698,530) -->
+    <g transform="rotate(35 698 530)">
+        <rect x="646" y="498" width="104" height="64" rx="32" fill="#7A878D" />
+    </g>
+
+    <!-- Magnifying glass -->
+    <circle cx="560" cy="434" r="168" fill="#E9EEF0" />
+    <circle cx="560" cy="434" r="128" fill="#FFFFFF" />
+    <circle cx="560" cy="434" r="168" fill="none" stroke="#5E6A6F" stroke-width="24" />
+    <circle cx="560" cy="434" r="128" fill="none" stroke="#AAB4B8" stroke-width="16" />
+
+    <!-- Handle (kept on top, aligned to the same anchor point) -->
+    <g transform="rotate(35 698 530)">
+        <rect x="714" y="494" width="240" height="72" rx="36" fill="#F2994A" />
+        <rect x="714" y="494" width="240" height="72" rx="36" fill="none" stroke="#1F2A2E"
+            stroke-opacity="0.10" stroke-width="12" />
+    </g>
+</svg>

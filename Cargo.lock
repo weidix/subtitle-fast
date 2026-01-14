@@ -5449,6 +5449,7 @@ dependencies = [
  "anyhow",
  "clap",
  "directories",
+ "embed-resource",
  "futures-channel",
  "futures-util",
  "gpui",

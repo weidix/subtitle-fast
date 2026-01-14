@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use crate::gui::components::Titlebar;
-use crate::gui::icons::{Icon, icon_md, icon_sm};
+use crate::gui::icons::{Icon, icon_md};
 
 /// Displays help content and license notices in a dedicated window.
 pub struct HelpWindow {
@@ -95,7 +95,7 @@ impl HelpWindow {
                             .bg(accent_bg)
                             .border_1()
                             .border_color(accent)
-                            .child(icon_sm(Icon::Sparkles, accent)),
+                            .child(icon_md(Icon::Logo, hsla(0.0, 0.0, 1.0, 1.0))),
                     )
                     .child(
                         div()

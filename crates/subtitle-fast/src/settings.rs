@@ -434,6 +434,7 @@ fn full_frame_roi() -> RoiConfig {
     }
 }
 
+#[allow(dead_code)]
 fn default_gui_roi() -> RoiConfig {
     RoiConfig {
         x: 0.15,

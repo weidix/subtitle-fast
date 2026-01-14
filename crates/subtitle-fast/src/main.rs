@@ -41,116 +41,122 @@ fn run_gui() -> Result<(), DecoderError> {
     use subtitle_fast::gui::components::bind_text_input_keys;
     use subtitle_fast::gui::{AppAssets, menus, runtime};
 
-    Application::new()
-        .with_assets(AppAssets)
-        .run(|cx: &mut App| {
-            runtime::init(tokio::runtime::Handle::current());
-            bind_text_input_keys(cx);
-            menus::register_actions(cx);
-            if cfg!(target_os = "macos") {
-                menus::set_macos_menus(cx, &[]);
-            } else {
-                menus::set_app_menus(cx, &[]);
-            }
-
-            let settings = subtitle_fast::settings::resolve_gui_settings().ok();
-            let model_paths = match model::init_ort_model_paths(None) {
-                Ok(paths) => Some(paths),
-                Err(err) => {
-                    eprintln!("ort model path resolution failed: {err}");
-                    None
-                }
-            };
-
-            if should_prepare_ort(settings.as_ref()) {
-                match model_paths {
-                    Some(paths) if !model::ort_models_present(&paths) => {
-                        let Some(handle) = DownloadWindow::open(cx) else {
-                            open_main_window(cx);
-                            return;
-                        };
-                        let (progress_tx, progress_rx) = unbounded::<model::ModelDownloadEvent>();
-                        let on_continue = Arc::new(move |window: &mut Window, cx: &mut App| {
-                            window.remove_window();
-                            open_main_window(cx);
-                        });
-                        let on_exit = Arc::new(move |window: &mut Window, cx: &mut App| {
-                            window.remove_window();
-                            cx.quit();
-                        });
-                        let _ = handle.update(cx, |this, window, cx| {
-                            this.bind_progress(
-                                progress_rx,
-                                handle,
-                                on_continue.clone(),
-                                on_exit.clone(),
-                                window,
-                                cx,
-                            );
-                        });
-
-                        let progress_tx_events = progress_tx.clone();
-                        let progress_tx_result = progress_tx.clone();
-                        let progress_callback = Arc::new(move |event| {
-                            let _ = progress_tx_events.unbounded_send(event);
-                        });
-                        let download_paths = paths.clone();
-
-                        if runtime::spawn(async move {
-                            let result = model::download_ort_models(
-                                &download_paths,
-                                Some(progress_callback),
-                            )
-                            .await;
-                            let final_event = match result {
-                                Ok(()) => model::ModelDownloadEvent::Completed,
-                                Err(err) => model::ModelDownloadEvent::Failed {
-                                    message: err.to_string(),
-                                },
-                            };
-                            let _ = progress_tx_result.unbounded_send(final_event);
-                        })
-                        .is_none()
-                        {
-                            let _ = progress_tx.unbounded_send(model::ModelDownloadEvent::Failed {
-                                message: "tokio runtime not initialized".to_string(),
-                            });
-                        }
-                    }
-                    Some(_) => open_main_window(cx),
-                    None => {
-                        let Some(handle) = DownloadWindow::open(cx) else {
-                            open_main_window(cx);
-                            return;
-                        };
-                        let (progress_tx, progress_rx) = unbounded::<model::ModelDownloadEvent>();
-                        let on_continue = Arc::new(move |window: &mut Window, cx: &mut App| {
-                            window.remove_window();
-                            open_main_window(cx);
-                        });
-                        let on_exit = Arc::new(move |window: &mut Window, cx: &mut App| {
-                            window.remove_window();
-                            cx.quit();
-                        });
-                        let _ = handle.update(cx, |this, window, cx| {
-                            this.bind_progress(
-                                progress_rx,
-                                handle,
-                                on_continue.clone(),
-                                on_exit.clone(),
-                                window,
-                                cx,
-                            );
-                        });
-                        let _ = progress_tx.unbounded_send(model::ModelDownloadEvent::Failed {
-                            message: "unable to resolve model paths".to_string(),
-                        });
-                    }
-                }
-            } else {
+    let app = Application::new().with_assets(AppAssets);
+    #[cfg(target_os = "macos")]
+    {
+        app.on_reopen(|cx| {
+            if cx.windows().is_empty() {
                 open_main_window(cx);
+            } else {
+                cx.activate(true);
             }
         });
+    }
+    app.run(|cx: &mut App| {
+        runtime::init(tokio::runtime::Handle::current());
+        bind_text_input_keys(cx);
+        menus::register_actions(cx);
+        if cfg!(target_os = "macos") {
+            menus::set_macos_menus(cx, &[]);
+        } else {
+            menus::set_app_menus(cx, &[]);
+        }
+        let settings = subtitle_fast::settings::resolve_gui_settings().ok();
+        let model_paths = match model::init_ort_model_paths(None) {
+            Ok(paths) => Some(paths),
+            Err(err) => {
+                eprintln!("ort model path resolution failed: {err}");
+                None
+            }
+        };
+
+        if should_prepare_ort(settings.as_ref()) {
+            match model_paths {
+                Some(paths) if !model::ort_models_present(&paths) => {
+                    let Some(handle) = DownloadWindow::open(cx) else {
+                        open_main_window(cx);
+                        return;
+                    };
+                    let (progress_tx, progress_rx) = unbounded::<model::ModelDownloadEvent>();
+                    let on_continue = Arc::new(move |window: &mut Window, cx: &mut App| {
+                        window.remove_window();
+                        open_main_window(cx);
+                    });
+                    let on_exit = Arc::new(move |window: &mut Window, cx: &mut App| {
+                        window.remove_window();
+                        cx.quit();
+                    });
+                    let _ = handle.update(cx, |this, window, cx| {
+                        this.bind_progress(
+                            progress_rx,
+                            handle,
+                            on_continue.clone(),
+                            on_exit.clone(),
+                            window,
+                            cx,
+                        );
+                    });
+
+                    let progress_tx_events = progress_tx.clone();
+                    let progress_tx_result = progress_tx.clone();
+                    let progress_callback = Arc::new(move |event| {
+                        let _ = progress_tx_events.unbounded_send(event);
+                    });
+                    let download_paths = paths.clone();
+
+                    if runtime::spawn(async move {
+                        let result =
+                            model::download_ort_models(&download_paths, Some(progress_callback))
+                                .await;
+                        let final_event = match result {
+                            Ok(()) => model::ModelDownloadEvent::Completed,
+                            Err(err) => model::ModelDownloadEvent::Failed {
+                                message: err.to_string(),
+                            },
+                        };
+                        let _ = progress_tx_result.unbounded_send(final_event);
+                    })
+                    .is_none()
+                    {
+                        let _ = progress_tx.unbounded_send(model::ModelDownloadEvent::Failed {
+                            message: "tokio runtime not initialized".to_string(),
+                        });
+                    }
+                }
+                Some(_) => open_main_window(cx),
+                None => {
+                    let Some(handle) = DownloadWindow::open(cx) else {
+                        open_main_window(cx);
+                        return;
+                    };
+                    let (progress_tx, progress_rx) = unbounded::<model::ModelDownloadEvent>();
+                    let on_continue = Arc::new(move |window: &mut Window, cx: &mut App| {
+                        window.remove_window();
+                        open_main_window(cx);
+                    });
+                    let on_exit = Arc::new(move |window: &mut Window, cx: &mut App| {
+                        window.remove_window();
+                        cx.quit();
+                    });
+                    let _ = handle.update(cx, |this, window, cx| {
+                        this.bind_progress(
+                            progress_rx,
+                            handle,
+                            on_continue.clone(),
+                            on_exit.clone(),
+                            window,
+                            cx,
+                        );
+                    });
+                    let _ = progress_tx.unbounded_send(model::ModelDownloadEvent::Failed {
+                        message: "unable to resolve model paths".to_string(),
+                    });
+                }
+            }
+        } else {
+            open_main_window(cx);
+        }
+    });
 
     Ok(())
 }

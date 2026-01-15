@@ -112,6 +112,12 @@ jobs:
           chmod +x appimagetool.AppImage
           sudo mv appimagetool.AppImage /usr/local/bin/appimagetool
 
+      - name: Setup Python venv (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python3 -m venv .venv
+          echo "${PWD}/.venv/bin" >> "${GITHUB_PATH}"
+
       - name: Setup MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1

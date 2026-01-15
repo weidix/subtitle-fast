@@ -40,6 +40,7 @@ Type=Application
 Categories=Video;AudioVideo;
 Terminal=false
 EOF
+cp "${APPDIR}/usr/share/applications/subtitle-fast.desktop" "${APPDIR}/subtitle-fast.desktop"
 
 cat > "${APPDIR}/AppRun" <<'EOF'
 #!/usr/bin/env bash

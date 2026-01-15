@@ -1,4 +1,5 @@
 name: Release
+# Trigger refresh comment
 
 on:
   workflow_run:

@@ -34,18 +34,6 @@ jobs:
           set -euo pipefail
           current_version="$(python3 -c 'import tomllib; from pathlib import Path; data = tomllib.loads(Path("crates/subtitle-fast/Cargo.toml").read_text(encoding="utf-8")); print(data["package"]["version"])')"
 
-          head_sha="${{ github.event.workflow_run.head_sha }}"
-          previous_commit="$(git rev-parse "${head_sha}^" 2>/dev/null || true)"
-          previous_version=""
-          if [ -n "${previous_commit}" ] && git cat-file -e "${previous_commit}:crates/subtitle-fast/Cargo.toml" 2>/dev/null; then
-            previous_version="$(git show "${previous_commit}:crates/subtitle-fast/Cargo.toml" | python3 -c 'import sys, tomllib; data = tomllib.loads(sys.stdin.read()); print(data["package"]["version"])')"
-          fi
-
-          changed="false"
-          if [ "${current_version}" != "${previous_version}" ]; then
-            changed="true"
-          fi
-
           tag="v${current_version}"
           tag_exists="false"
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
@@ -53,7 +41,7 @@ jobs:
           fi
 
           should_release="false"
-          if [ "${changed}" = "true" ] && [ "${tag_exists}" = "false" ]; then
+          if [ "${tag_exists}" = "false" ]; then
             should_release="true"
           fi
 

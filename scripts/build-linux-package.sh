@@ -6,7 +6,8 @@ APP_NAME="${APP_NAME:-subtitle-fast}"
 FEATURES="${FEATURES:-gui}"
 TARGET_DIR="${ROOT_DIR}/target/release"
 DIST_DIR="${ROOT_DIR}/target/bundle/linux"
-APPDIR="${DIST_DIR}/AppDir"
+WORK_DIR="${ROOT_DIR}/target/work/linux"
+APPDIR="${WORK_DIR}/AppDir"
 ICON_SRC="${ROOT_DIR}/crates/subtitle-fast/assets/app-icon/logo.png"
 
 VERSION="$(
@@ -56,7 +57,7 @@ if command -v appimagetool >/dev/null 2>&1; then
   echo "AppImage created at ${APPIMAGE_PATH}"
 else
   ARCHIVE_PATH="${DIST_DIR}/${APP_NAME}-${VERSION}-linux.tar.gz"
-  tar -czf "${ARCHIVE_PATH}" -C "${DIST_DIR}" "AppDir"
+  tar -czf "${ARCHIVE_PATH}" -C "${WORK_DIR}" "AppDir"
   echo "AppImage tool not found; tarball created at ${ARCHIVE_PATH}"
 fi
 echo "Output directory: ${DIST_DIR}"

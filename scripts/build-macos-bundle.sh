@@ -7,7 +7,8 @@ BUNDLE_ID="${BUNDLE_ID:-com.weidix.subtitle-fast}"
 FEATURES="${FEATURES:-gui}"
 TARGET_DIR="${ROOT_DIR}/target/release"
 DIST_DIR="${ROOT_DIR}/target/bundle/macos"
-APP_DIR="${DIST_DIR}/${APP_NAME}.app"
+WORK_DIR="${ROOT_DIR}/target/work/macos"
+APP_DIR="${WORK_DIR}/${APP_NAME}.app"
 ICON_PATH="${ROOT_DIR}/crates/subtitle-fast/assets/app-icon/logo.icns"
 
 VERSION="$(

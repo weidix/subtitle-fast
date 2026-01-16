@@ -174,9 +174,9 @@ jobs:
             --features "detector-vision,ocr-vision,ocr-ort"
       - name: Build CLI (Windows)
         if: runner.os == 'Windows'
-        shell: msys2 {0}
+        shell: pwsh
         run: |
-          cargo build --release --bin subtitle-fast --no-default-features \
+          cargo build --release --bin subtitle-fast --no-default-features `
             --features "detector-vision,ocr-vision,ocr-ort"
 
       - name: Package CLI (Linux)
@@ -214,8 +214,9 @@ jobs:
 
       - name: Build GUI (Windows)
         if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: cargo build --release --bin subtitle-fast
+        shell: pwsh
+        run: |
+          cargo build --release --bin subtitle-fast
 
       - name: Package GUI (Windows)
         if: runner.os == 'Windows'

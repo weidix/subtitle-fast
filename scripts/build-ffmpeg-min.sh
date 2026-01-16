@@ -90,23 +90,6 @@ fi
 rm -rf "${SOURCE_DIR}"
 tar -xzf "${TARBALL}"
 
-if [[ "${FFMPEG_TOOLCHAIN}" == "msvc" ]]; then
-    require python
-    python - <<'PY'
-from pathlib import Path
-import sys
-
-path = Path("configure")
-text = path.read_text()
-old = 'gsub(/\\\\/, "/")'
-new = 'gsub(/\\\\\\\\/, "/")'
-if old not in text:
-    print("warning: expected depcmd pattern not found in configure", file=sys.stderr)
-else:
-    path.write_text(text.replace(old, new))
-PY
-fi
-
 echo "==> Configuring (prefix=${PREFIX})"
 rm -rf "${PREFIX}"
 mkdir -p "${PREFIX}"

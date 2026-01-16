@@ -67,7 +67,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-latest
+          - macos-14
           - windows-latest
     env:
       VERSION: ${{ needs.version-check.outputs.version }}
@@ -185,7 +185,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p target/bundle/linux
-          tar -czf "target/bundle/linux/subtitle-fast-cli-${VERSION}-linux.tar.gz" \
+          ARCH="$(uname -m)"
+          if [ "${ARCH}" = "aarch64" ]; then
+            ARCH="arm64"
+          fi
+          tar -czf "target/bundle/linux/subtitle-fast-cli-${VERSION}-linux-${ARCH}.tar.gz" \
             -C target/release subtitle-fast
 
       - name: Package CLI (macOS)
@@ -193,7 +197,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p target/bundle/macos
-          tar -czf "target/bundle/macos/subtitle-fast-cli-${VERSION}-macos.tar.gz" \
+          ARCH="$(uname -m)"
+          if [ "${ARCH}" = "aarch64" ]; then
+            ARCH="arm64"
+          fi
+          tar -czf "target/bundle/macos/subtitle-fast-cli-${VERSION}-macos-${ARCH}.tar.gz" \
             -C target/release subtitle-fast
 
       - name: Package CLI (Windows)
@@ -202,8 +210,14 @@ jobs:
         run: |
           $dist = "target\\bundle\\windows"
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $arch = $env:PROCESSOR_ARCHITECTURE
+          switch ($arch) {
+            "AMD64" { $arch = "x86_64" }
+            "ARM64" { $arch = "arm64" }
+            "x86" { $arch = "x86" }
+          }
           Compress-Archive -Path "target\\release\\subtitle-fast.exe" `
-            -DestinationPath "$dist\\subtitle-fast-cli-$env:VERSION-windows.zip"
+            -DestinationPath "$dist\\subtitle-fast-cli-$env:VERSION-windows-$arch.zip"
 
       - name: Build GUI (Linux)
         if: runner.os == 'Linux'
@@ -225,8 +239,14 @@ jobs:
         run: |
           $dist = "target\\bundle\\windows"
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $arch = $env:PROCESSOR_ARCHITECTURE
+          switch ($arch) {
+            "AMD64" { $arch = "x86_64" }
+            "ARM64" { $arch = "arm64" }
+            "x86" { $arch = "x86" }
+          }
           Compress-Archive -Path "target\\release\\subtitle-fast.exe" `
-            -DestinationPath "$dist\\subtitle-fast-gui-$env:VERSION-windows.zip"
+            -DestinationPath "$dist\\subtitle-fast-gui-$env:VERSION-windows-$arch.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

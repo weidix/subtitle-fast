@@ -19,6 +19,12 @@ data = tomllib.loads(path.read_text(encoding="utf-8"))
 print(data["package"]["version"])
 PY
 )"
+ARCH_LABEL="${ARCH_LABEL:-$(uname -m)}"
+if [ "${ARCH_LABEL}" = "aarch64" ]; then
+  ARCH_LABEL="arm64"
+fi
+PACKAGE_KIND="${PACKAGE_KIND:-gui}"
+ARTIFACT_BASENAME="${ARTIFACT_BASENAME:-${APP_NAME}-${PACKAGE_KIND}-${VERSION}-linux-${ARCH_LABEL}}"
 
 cargo build --release --bin subtitle-fast --features "${FEATURES}"
 
@@ -52,11 +58,11 @@ chmod +x "${APPDIR}/AppRun"
 
 mkdir -p "${DIST_DIR}"
 if command -v appimagetool >/dev/null 2>&1; then
-  APPIMAGE_PATH="${DIST_DIR}/${APP_NAME}-${VERSION}.AppImage"
+  APPIMAGE_PATH="${DIST_DIR}/${ARTIFACT_BASENAME}.AppImage"
   appimagetool "${APPDIR}" "${APPIMAGE_PATH}"
   echo "AppImage created at ${APPIMAGE_PATH}"
 else
-  ARCHIVE_PATH="${DIST_DIR}/${APP_NAME}-${VERSION}-linux.tar.gz"
+  ARCHIVE_PATH="${DIST_DIR}/${ARTIFACT_BASENAME}.tar.gz"
   tar -czf "${ARCHIVE_PATH}" -C "${WORK_DIR}" "AppDir"
   echo "AppImage tool not found; tarball created at ${ARCHIVE_PATH}"
 fi

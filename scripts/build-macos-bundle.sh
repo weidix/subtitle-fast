@@ -20,6 +20,12 @@ data = tomllib.loads(path.read_text(encoding="utf-8"))
 print(data["package"]["version"])
 PY
 )"
+ARCH_LABEL="${ARCH_LABEL:-$(uname -m)}"
+if [ "${ARCH_LABEL}" = "aarch64" ]; then
+  ARCH_LABEL="arm64"
+fi
+PACKAGE_KIND="${PACKAGE_KIND:-gui}"
+ARTIFACT_BASENAME="${ARTIFACT_BASENAME:-${APP_NAME}-${PACKAGE_KIND}-${VERSION}-macos-${ARCH_LABEL}}"
 
 cargo build --release --bin subtitle-fast --features "${FEATURES}"
 
@@ -57,7 +63,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<EOF
 EOF
 
 mkdir -p "${DIST_DIR}"
-ZIP_PATH="${DIST_DIR}/${APP_NAME}-${VERSION}-macos.zip"
+ZIP_PATH="${DIST_DIR}/${ARTIFACT_BASENAME}.zip"
 ditto -c -k --sequesterRsrc --keepParent "${APP_DIR}" "${ZIP_PATH}"
 echo "macOS bundle created at ${APP_DIR}"
 echo "macOS zip created at ${ZIP_PATH}"

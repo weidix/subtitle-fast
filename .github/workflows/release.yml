@@ -231,6 +231,8 @@ jobs:
 
       - name: Build GUI (macOS)
         if: runner.os == 'macOS'
+        env:
+          SIGN_IDENTITY: "-"
         run: ./scripts/build-macos-bundle.sh
 
       - name: Build GUI (Windows)

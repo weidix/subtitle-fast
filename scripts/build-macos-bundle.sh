@@ -11,6 +11,9 @@ WORK_DIR="${ROOT_DIR}/target/work/macos"
 APP_DIR="${WORK_DIR}/${APP_NAME}.app"
 DMG_DIR="${WORK_DIR}/dmg"
 ICON_PATH="${ROOT_DIR}/crates/subtitle-fast/assets/app-icon/logo.icns"
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+SIGN_ENTITLEMENTS="${SIGN_ENTITLEMENTS:-}"
+CODESIGN_OPTIONS="${CODESIGN_OPTIONS:---options runtime --timestamp}"
 
 VERSION="$(
   python3 - <<'PY'
@@ -62,6 +65,19 @@ cat > "${APP_DIR}/Contents/Info.plist" <<EOF
 </dict>
 </plist>
 EOF
+
+if [ -n "${SIGN_IDENTITY}" ]; then
+  read -r -a codesign_opts <<< "${CODESIGN_OPTIONS}"
+  codesign_args=(--force --sign "${SIGN_IDENTITY}")
+  if [ "${#codesign_opts[@]}" -ne 0 ]; then
+    codesign_args+=("${codesign_opts[@]}")
+  fi
+  if [ -n "${SIGN_ENTITLEMENTS}" ]; then
+    codesign_args+=(--entitlements "${SIGN_ENTITLEMENTS}")
+  fi
+  codesign "${codesign_args[@]}" "${APP_DIR}"
+  codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
+fi
 
 mkdir -p "${DIST_DIR}"
 rm -rf "${DMG_DIR}"

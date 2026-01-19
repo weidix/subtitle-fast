@@ -92,21 +92,37 @@ fn compiled_backends() -> Vec<Backend> {
     backends
 }
 
-#[cfg(target_os = "macos")]
-fn append_platform_backends(_backends: &mut Vec<Backend>) {
+#[cfg(all(
+    target_os = "macos",
+    any(feature = "backend-videotoolbox", feature = "backend-ffmpeg")
+))]
+fn append_platform_backends(backends: &mut Vec<Backend>) {
     #[cfg(feature = "backend-videotoolbox")]
     {
-        _backends.push(Backend::VideoToolbox);
+        backends.push(Backend::VideoToolbox);
     }
     #[cfg(feature = "backend-ffmpeg")]
     {
         if ffmpeg_runtime_available() {
-            _backends.push(Backend::FFmpeg);
+            backends.push(Backend::FFmpeg);
         }
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(
+    target_os = "macos",
+    not(any(feature = "backend-videotoolbox", feature = "backend-ffmpeg"))
+))]
+fn append_platform_backends(_backends: &mut [Backend]) {}
+
+#[cfg(all(
+    not(target_os = "macos"),
+    any(
+        feature = "backend-mft",
+        feature = "backend-dxva",
+        feature = "backend-ffmpeg"
+    )
+))]
 fn append_platform_backends(backends: &mut Vec<Backend>) {
     #[cfg(all(feature = "backend-mft", target_os = "windows"))]
     {
@@ -123,6 +139,16 @@ fn append_platform_backends(backends: &mut Vec<Backend>) {
         }
     }
 }
+
+#[cfg(all(
+    not(target_os = "macos"),
+    not(any(
+        feature = "backend-mft",
+        feature = "backend-dxva",
+        feature = "backend-ffmpeg"
+    ))
+))]
+fn append_platform_backends(_backends: &mut [Backend]) {}
 
 #[cfg(feature = "backend-ffmpeg")]
 fn ffmpeg_runtime_available() -> bool {

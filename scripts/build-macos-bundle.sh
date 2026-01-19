@@ -9,6 +9,7 @@ TARGET_DIR="${ROOT_DIR}/target/release"
 DIST_DIR="${ROOT_DIR}/target/bundle/macos"
 WORK_DIR="${ROOT_DIR}/target/work/macos"
 APP_DIR="${WORK_DIR}/${APP_NAME}.app"
+DMG_DIR="${WORK_DIR}/dmg"
 ICON_PATH="${ROOT_DIR}/crates/subtitle-fast/assets/app-icon/logo.icns"
 
 VERSION="$(
@@ -63,8 +64,12 @@ cat > "${APP_DIR}/Contents/Info.plist" <<EOF
 EOF
 
 mkdir -p "${DIST_DIR}"
-ZIP_PATH="${DIST_DIR}/${ARTIFACT_BASENAME}.zip"
-ditto -c -k --sequesterRsrc --keepParent "${APP_DIR}" "${ZIP_PATH}"
+rm -rf "${DMG_DIR}"
+mkdir -p "${DMG_DIR}"
+ditto "${APP_DIR}" "${DMG_DIR}/${APP_NAME}.app"
+ln -sf /Applications "${DMG_DIR}/Applications"
+DMG_PATH="${DIST_DIR}/${ARTIFACT_BASENAME}.dmg"
+hdiutil create -volname "${APP_NAME}" -srcfolder "${DMG_DIR}" -ov -format UDZO "${DMG_PATH}"
 echo "macOS bundle created at ${APP_DIR}"
-echo "macOS zip created at ${ZIP_PATH}"
+echo "macOS dmg created at ${DMG_PATH}"
 echo "Output directory: ${DIST_DIR}"

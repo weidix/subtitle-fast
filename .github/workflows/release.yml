@@ -263,6 +263,7 @@ jobs:
             target/bundle/**/*.zip
             target/bundle/**/*.tar.gz
             target/bundle/**/*.AppImage
+            target/bundle/**/*.dmg
 
   release:
     name: Create GitHub release
@@ -285,3 +286,4 @@ jobs:
             dist/**/*.zip
             dist/**/*.tar.gz
             dist/**/*.AppImage
+            dist/**/*.dmg

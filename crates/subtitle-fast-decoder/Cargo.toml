@@ -5,16 +5,17 @@ edition = "2024"
 build = "build.rs"
 
 [features]
-default = [
+default = []
+backend-ffmpeg = ["dep:ffmpeg-next"]
+backend-videotoolbox = []
+backend-mft = []
+backend-dxva = []
+backend-all = [
     "backend-ffmpeg",
     "backend-videotoolbox",
     "backend-mft",
     "backend-dxva",
 ]
-backend-ffmpeg = ["dep:ffmpeg-next"]
-backend-videotoolbox = ["dep:rayon"]
-backend-mft = []
-backend-dxva = []
 
 [dependencies]
 subtitle-fast-types = { path = "../subtitle-fast-types" }
@@ -36,7 +37,6 @@ ffmpeg-next = { version = "8", optional = true, default-features = false, featur
     "software-resampling",
     "static",
 ] }
-rayon = { version = "1.10", optional = true }
 parking_lot = "0.12"
 
 [build-dependencies]

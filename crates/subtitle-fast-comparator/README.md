@@ -14,14 +14,13 @@ opened and closed at the right timestamps.
 ## Using the crate
 
 ```rust
-use subtitle_fast_comparator::{ComparatorFactory, ComparatorKind, ComparatorSettings};
+use subtitle_fast_comparator::{Backend, Configuration, PreprocessSettings};
 
-let settings = ComparatorSettings {
-    kind: ComparatorKind::BitsetCover,
-    target: 230,
-    delta: 12,
+let configuration = Configuration {
+    backend: Backend::BitsetCover,
+    preprocess: PreprocessSettings { target: 230, delta: 12 },
 };
-let comparator = ComparatorFactory::new(settings).build();
+let comparator = configuration.create_comparator();
 
 let reference = comparator.extract(&frame_a, &roi).unwrap();
 let candidate = comparator.extract(&frame_b, &roi).unwrap();

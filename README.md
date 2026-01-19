@@ -8,27 +8,31 @@ License: [MIT](LICENSE)
 
 ## Quick start
 
-- Prerequisites: Rust (stable), and the native pieces you plan to use (FFmpeg libs for `backend-ffmpeg`, built-in VideoToolbox on macOS, D3D11/DXVA-capable drivers on Windows, Media Foundation for the fallback MFT backend, and Apple Vision frameworks for `ocr-vision`).
-- Minimal run (uses the compiled decoder backends and Vision OCR on macOS):
+- Prerequisites: Rust (stable), and the native pieces you plan to use (FFmpeg libs for `backend-ffmpeg`, built-in
+  VideoToolbox on macOS, D3D11/DXVA-capable drivers on Windows, Media Foundation for the fallback MFT backend, and Apple
+  Vision frameworks for `ocr-vision`).
+- Minimal run (explicitly enable backends and OCR):
 
 ```bash
-cargo run --release -- --output subtitles.srt path/to/video.mp4
+cargo run --release --features backend-ffmpeg,ocr-ort \
+  -- --output subtitles.srt path/to/video.mp4
 ```
 
-- On platforms without macOS SDKs, disable the mac-only defaults:
+- macOS example (VideoToolbox + Vision):
 
 ```bash
-cargo run --release --no-default-features \
-  -- --backend ffmpeg --output subtitles.srt path/to/video.mp4
+cargo run --release --features backend-videotoolbox,ocr-vision \
+  -- --output subtitles.srt path/to/video.mp4
 ```
 
 ## Backends and features
 
-**Decoders** (enabled by default in `subtitle-fast-decoder`)
+**Decoders** (enable via `backend-*`; defaults are minimal)
 - `backend-ffmpeg` (FFmpeg; portable).
 - `backend-videotoolbox` (macOS hardware decode).
 - `backend-dxva` (Windows D3D11/DXVA hardware decode).
 - `backend-mft` (Windows Media Foundation).
+- `backend-all` enables every compiled backend in one switch.
 - `mock` is always available and useful for CI or dry runs (`--backend mock`).
 
 The CLI picks the first compiled backend in priority order (mock on CI; VideoToolbox then FFmpeg on macOS; DXVA then MFT then FFmpeg on Windows; FFmpeg elsewhere) and falls back if a backend fails, preserving backpressure when downstream stages slow down.
@@ -36,7 +40,8 @@ The CLI picks the first compiled backend in priority order (mock on CI; VideoToo
 **OCR**
 - `ocr-vision` enables Apple Vision on macOS (`--ocr-backend vision` or `auto` when available).
 - `ocr-ort` enables ONNX Runtime + PP-OCRv5 recognition across platforms (requires the PP-OCR model assets).
-- Without Vision, the noop OCR engine keeps the pipeline running for benchmarking (`--ocr-backend noop`).
+- `ocr-all` enables both OCR engines.
+- Without OCR features, the noop OCR engine keeps the pipeline running for benchmarking (`--ocr-backend noop`).
 
 **Detection helpers**
 - `detector-vision` (macOS) is available on the validator crate; disable mac-only flags on other targets.
@@ -84,4 +89,6 @@ cargo test -p subtitle-fast-decoder --features backend-ffmpeg
 
 ## Performance snapshot
 
-- A 2h01m 1080p H.264 (High, yuv420p, 29.97 fps, ~5.0 Mbps video with AAC 48 kHz stereo ~255 kb/s; overall ~5.26 Mbps) sample completes in roughly 1m40s on a Mac mini M4 using `cargo run --release` with default features (VideoToolbox + Vision available), issuing about 3,622 OCR requests over the run.
+- A 2h01m 1080p H.264 (High, yuv420p, 29.97 fps, ~5.0 Mbps video with AAC 48 kHz stereo ~255 kb/s; overall ~5.26 Mbps)
+  sample completes in roughly 1m40s on a Mac mini M4 using `cargo run --release --features backend-videotoolbox,ocr-vision`,
+  issuing about 3,622 OCR requests over the run.

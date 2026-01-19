@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use subtitle_fast_comparator::ComparatorKind;
+use subtitle_fast_comparator::Backend;
 use subtitle_fast_types::RoiConfig;
 use subtitle_fast_validator::subtitle_detection::SubtitleDetectorKind;
 use subtitle_fast_validator::subtitle_detection::{DEFAULT_DELTA, DEFAULT_TARGET};
@@ -117,7 +117,7 @@ pub struct DetectionSettings {
     pub target: u8,
     pub delta: u8,
     pub detector: SubtitleDetectorKind,
-    pub comparator: Option<ComparatorKind>,
+    pub comparator: Option<Backend>,
     pub roi: Option<RoiConfig>,
 }
 
@@ -530,7 +530,7 @@ fn resolve_comparator_kind(
     file_value: Option<String>,
     use_file: bool,
     config_path: Option<&PathBuf>,
-) -> Result<Option<ComparatorKind>, ConfigError> {
+) -> Result<Option<Backend>, ConfigError> {
     let raw = match normalize_string(cli_value) {
         Some(value) => Some(value),
         None => {
@@ -546,7 +546,7 @@ fn resolve_comparator_kind(
         return Ok(None);
     };
 
-    match ComparatorKind::from_str(&value) {
+    match Backend::from_str(&value) {
         Ok(kind) => Ok(Some(kind)),
         Err(_) => Err(ConfigError::InvalidValue {
             path: config_path.cloned(),
@@ -563,21 +563,14 @@ fn resolve_detector_kind(
     let Some(value) = normalize_string(file_value) else {
         return Ok(SubtitleDetectorKind::ProjectionBand);
     };
-    let normalized = value.trim().to_ascii_lowercase();
-    let kind = match normalized.as_str() {
-        "auto" => SubtitleDetectorKind::Auto,
-        "macos-vision" | "vision" => SubtitleDetectorKind::MacVision,
-        "integral-band" | "integral_band" => SubtitleDetectorKind::IntegralBand,
-        "projection-band" | "projection_band" => SubtitleDetectorKind::ProjectionBand,
-        _ => {
-            return Err(ConfigError::InvalidValue {
-                path: config_path.cloned(),
-                field: "detection.detector",
-                value,
-            });
-        }
-    };
-    Ok(kind)
+    match SubtitleDetectorKind::from_str(&value) {
+        Ok(kind) => Ok(kind),
+        Err(_) => Err(ConfigError::InvalidValue {
+            path: config_path.cloned(),
+            field: "detection.detector",
+            value,
+        }),
+    }
 }
 
 fn resolve_decoder_capacity(

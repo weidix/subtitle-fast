@@ -1,27 +1,39 @@
+//! Usage:
+//! cargo run -p subtitle-fast-comparator --example dump -- \
+//!   --yuv-dir ./demo/decoder/yuv --roi-dir ./demo/validator/projection \
+//!   --output-dir ./demo/comparator --dump-file ./demo/comparator/comparator_dump.json \
+//!   --max-frames 100 --comparator sparse-chamfer
+
 use std::collections::BTreeMap;
+use std::env;
 use std::error::Error;
 use std::fs::{self, File};
 use std::io::BufWriter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
 use serde_json::to_writer_pretty;
-use subtitle_fast_comparator::{
-    ComparatorFactory, ComparatorKind, ComparatorSettings, PreprocessSettings,
-};
+use subtitle_fast_comparator::{Backend, Configuration, PreprocessSettings};
 
 #[path = "common/roi_examples.rs"]
 mod roi_examples;
 
 use roi_examples::{load_frame, load_rois};
 
-const YUV_DIR: &str = "./demo/decoder/yuv";
-const ROI_DIR: &str = "./demo/validator/projection";
-const OUTPUT_DIR: &str = "./demo/comparator";
-const DUMP_FILE: &str = "./demo/comparator/comparator_dump.json";
-const MAX_FRAMES: usize = 100;
-const COMPARATOR: ComparatorKind = ComparatorKind::SparseChamfer;
+struct Args {
+    yuv_dir: PathBuf,
+    roi_dir: PathBuf,
+    output_dir: PathBuf,
+    dump_file: Option<PathBuf>,
+    max_frames: usize,
+    comparator: Backend,
+}
+
+enum CliError {
+    HelpRequested,
+    Message(String),
+}
 
 #[derive(Serialize)]
 struct RoiResultDump {
@@ -49,13 +61,26 @@ struct ComparatorDump {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut frames = collect_yuv_frames(YUV_DIR)?;
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(CliError::HelpRequested) => {
+            print_usage();
+            return Ok(());
+        }
+        Err(CliError::Message(message)) => {
+            eprintln!("{message}");
+            print_usage();
+            return Err(message.into());
+        }
+    };
+
+    let mut frames = collect_yuv_frames(&args.yuv_dir)?;
     if frames.len() < 2 {
         return Err("need at least two YUV frames for comparison".into());
     }
 
-    if frames.len() > MAX_FRAMES {
-        frames.truncate(MAX_FRAMES);
+    if args.max_frames > 0 && frames.len() > args.max_frames {
+        frames.truncate(args.max_frames);
     }
 
     let total_pairs = frames.len() - 1;
@@ -66,7 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?
     .progress_chars("█▉▊▋▌▍▎▏  ");
     progress.set_style(style);
-    progress.set_prefix(COMPARATOR.as_str().to_string());
+    progress.set_prefix(args.comparator.as_str().to_string());
 
     let mut pairs = Vec::new();
 
@@ -89,7 +114,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .file_stem()
             .and_then(|s| s.to_str())
             .ok_or("failed to read frame file name")?;
-        let roi_path = PathBuf::from(ROI_DIR).join(format!("{stem}.json"));
+        let roi_path = args.roi_dir.join(format!("{stem}.json"));
 
         if !roi_path.exists() {
             pairs.push(FramePairDump {
@@ -107,12 +132,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             target: selection.luma_band.target,
             delta: selection.luma_band.delta,
         };
-        let comparator = ComparatorFactory::new(ComparatorSettings {
-            kind: COMPARATOR,
-            target: preprocess.target,
-            delta: preprocess.delta,
-        })
-        .build();
+        let configuration = Configuration {
+            backend: args.comparator,
+            preprocess,
+        };
+        let comparator = configuration.create_comparator();
 
         let frame_a = load_frame(
             prev_frame_path,
@@ -160,24 +184,112 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     progress.finish_with_message("done");
 
-    fs::create_dir_all(OUTPUT_DIR)?;
-    let file = File::create(DUMP_FILE)?;
+    fs::create_dir_all(&args.output_dir)?;
+    let dump_file = args
+        .dump_file
+        .unwrap_or_else(|| args.output_dir.join("comparator_dump.json"));
+    let file = File::create(&dump_file)?;
     let writer = BufWriter::new(file);
 
     let dump = ComparatorDump {
-        comparator: COMPARATOR.as_str().to_string(),
-        yuv_dir: YUV_DIR.to_string(),
-        roi_dir: ROI_DIR.to_string(),
+        comparator: args.comparator.as_str().to_string(),
+        yuv_dir: args.yuv_dir.display().to_string(),
+        roi_dir: args.roi_dir.display().to_string(),
         frame_pairs: total_pairs,
         pairs,
     };
 
     to_writer_pretty(writer, &dump)?;
 
+    println!("Wrote comparator dump to {:?}", dump_file);
+
     Ok(())
 }
 
-fn collect_yuv_frames(dir: &str) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+fn parse_args() -> Result<Args, CliError> {
+    let mut yuv_dir = PathBuf::from("./demo/decoder/yuv");
+    let mut roi_dir = PathBuf::from("./demo/validator/projection");
+    let mut output_dir = PathBuf::from("./demo/comparator");
+    let mut dump_file = None;
+    let mut max_frames = 100usize;
+    let mut comparator = Backend::SparseChamfer;
+    let mut iter = env::args().skip(1);
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Err(CliError::HelpRequested),
+            "--yuv-dir" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--yuv-dir requires a value".to_string()))?;
+                yuv_dir = PathBuf::from(value);
+            }
+            "--roi-dir" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--roi-dir requires a value".to_string()))?;
+                roi_dir = PathBuf::from(value);
+            }
+            "--output-dir" => {
+                let value = iter.next().ok_or_else(|| {
+                    CliError::Message("--output-dir requires a value".to_string())
+                })?;
+                output_dir = PathBuf::from(value);
+            }
+            "--dump-file" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--dump-file requires a value".to_string()))?;
+                dump_file = Some(PathBuf::from(value));
+            }
+            "--max-frames" => {
+                let value = iter.next().ok_or_else(|| {
+                    CliError::Message("--max-frames requires a value".to_string())
+                })?;
+                max_frames = value
+                    .parse::<usize>()
+                    .map_err(|_| CliError::Message("--max-frames must be a number".to_string()))?;
+            }
+            "--comparator" => {
+                let value = iter.next().ok_or_else(|| {
+                    CliError::Message("--comparator requires a value".to_string())
+                })?;
+                comparator = parse_comparator(&value)?;
+            }
+            _ if arg.starts_with('-') => {
+                return Err(CliError::Message(format!("unknown flag '{arg}'")));
+            }
+            _ => {
+                comparator = parse_comparator(&arg)?;
+            }
+        }
+    }
+
+    Ok(Args {
+        yuv_dir,
+        roi_dir,
+        output_dir,
+        dump_file,
+        max_frames,
+        comparator,
+    })
+}
+
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!(
+        "  dump [--yuv-dir <dir>] [--roi-dir <dir>] [--output-dir <dir>]\n\
+       [--dump-file <path>] [--max-frames <n>] [--comparator <name>]"
+    );
+}
+
+fn parse_comparator(value: &str) -> Result<Backend, CliError> {
+    value
+        .parse::<Backend>()
+        .map_err(|err| CliError::Message(format!("invalid comparator '{value}': {err}")))
+}
+
+fn collect_yuv_frames(dir: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
     let mut frames = Vec::new();
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();

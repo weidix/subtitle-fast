@@ -35,5 +35,5 @@ and their scores. Pipelines can also supply a temporary ROI override when subtit
 | ------- | ----------- |
 | `detector-vision` | Enables the Apple Vision-based detector (macOS only). |
 
-When the feature is disabled the crate still provides the luma-band detector, which is cross-platform and requires no
-native dependencies.
+Defaults are minimal (`default = []`). When the feature is disabled the crate still provides the luma-band detector, which
+is cross-platform and requires no native dependencies.

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="${APP_NAME:-subtitle-fast}"
 BUNDLE_ID="${BUNDLE_ID:-com.weidix.subtitle-fast}"
-FEATURES="${FEATURES:-gui}"
+FEATURES="${FEATURES:-gui,backend-videotoolbox,backend-ffmpeg,detector-vision,ocr-vision,ocr-ort}"
 TARGET_DIR="${ROOT_DIR}/target/release"
 DIST_DIR="${ROOT_DIR}/target/bundle/macos"
 WORK_DIR="${ROOT_DIR}/target/work/macos"
@@ -27,7 +27,7 @@ fi
 PACKAGE_KIND="${PACKAGE_KIND:-gui}"
 ARTIFACT_BASENAME="${ARTIFACT_BASENAME:-${APP_NAME}-${PACKAGE_KIND}-${VERSION}-macos-${ARCH_LABEL}}"
 
-cargo build --release --bin subtitle-fast --features "${FEATURES}"
+cargo build --release --bin subtitle-fast --no-default-features --features "${FEATURES}"
 
 rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"

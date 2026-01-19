@@ -1,7 +1,15 @@
+//! Usage:
+//! cargo run -p gpui --example video_cvpixelbuffer -- \
+//!   --input examples/video/big-buck-bunny-480p-30sec.mp4 --backend videotoolbox
+//!
+//! Note: requires the subtitle-fast-decoder VideoToolbox backend to be enabled.
+
 #[cfg(target_os = "macos")]
 mod macos {
     use std::{
+        env,
         path::{Path, PathBuf},
+        str::FromStr,
         sync::mpsc::{Receiver, SyncSender, sync_channel},
         thread,
         time::{Duration, Instant},
@@ -16,15 +24,72 @@ mod macos {
     use subtitle_fast_decoder::{Backend, Configuration, OutputFormat, VideoFrame};
     use tokio_stream::StreamExt;
 
-    const INPUT_VIDEO: &str = "examples/video/big-buck-bunny-480p-30sec.mp4";
+    struct Args {
+        input: Option<PathBuf>,
+        backend: Option<String>,
+        list_backends: bool,
+    }
+
+    enum CliError {
+        HelpRequested,
+        Message(String),
+    }
 
     pub fn run() {
+        let args = match parse_args() {
+            Ok(args) => args,
+            Err(CliError::HelpRequested) => {
+                print_usage();
+                return;
+            }
+            Err(CliError::Message(message)) => {
+                eprintln!("{message}");
+                print_usage();
+                return;
+            }
+        };
+
+        if args.list_backends {
+            print_backends();
+            return;
+        }
+
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let input_path = manifest_dir.join(INPUT_VIDEO);
+        let input_path = match args.input {
+            Some(path) if path.is_relative() => manifest_dir.join(path),
+            Some(path) => path,
+            None => {
+                eprintln!("missing input path (use --input <path>)");
+                print_usage();
+                return;
+            }
+        };
+
+        let backend_name = args.backend.as_deref().unwrap_or("videotoolbox");
+        let backend = match Backend::from_str(backend_name) {
+            Ok(backend) => backend,
+            Err(err) => {
+                eprintln!("invalid backend '{backend_name}': {err}");
+                print_backends();
+                return;
+            }
+        };
+        if backend.as_str() != "videotoolbox" {
+            eprintln!("cvpixelbuffer output requires the videotoolbox backend");
+            return;
+        }
+        let available = Configuration::available_backends();
+        if !available.contains(&backend) {
+            eprintln!(
+                "backend '{}' is not available in this build",
+                backend.as_str()
+            );
+            return;
+        }
 
         let handle = VideoHandle::new();
         let (sender, receiver) = sync_channel(1);
-        spawn_decoder(sender, input_path);
+        spawn_decoder(sender, input_path, backend);
 
         Application::new().run(move |cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(980.0), px(600.0)), cx);
@@ -77,7 +142,7 @@ mod macos {
         }
     }
 
-    fn spawn_decoder(sender: SyncSender<VideoFrame>, input_path: PathBuf) {
+    fn spawn_decoder(sender: SyncSender<VideoFrame>, input_path: PathBuf, backend: Backend) {
         thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_time()
@@ -90,14 +155,8 @@ mod macos {
                     return;
                 }
 
-                let available = Configuration::available_backends();
-                if !available.contains(&Backend::VideoToolbox) {
-                    eprintln!("VideoToolbox backend is not available in this build");
-                    return;
-                }
-
                 let config = Configuration {
-                    backend: Backend::VideoToolbox,
+                    backend,
                     input: Some(input_path),
                     channel_capacity: None,
                     output_format: OutputFormat::CVPixelBuffer,
@@ -184,6 +243,76 @@ mod macos {
         let buffer_ref = handle as CVPixelBufferRef;
         let buffer = unsafe { CVPixelBuffer::wrap_under_get_rule(buffer_ref) };
         Some(buffer)
+    }
+
+    fn parse_args() -> Result<Args, CliError> {
+        let mut input = None;
+        let mut backend = None;
+        let mut list_backends = false;
+        let mut iter = env::args().skip(1);
+
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--help" | "-h" => return Err(CliError::HelpRequested),
+                "--input" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| CliError::Message("--input requires a value".to_string()))?;
+                    input = Some(PathBuf::from(value));
+                }
+                "--backend" => {
+                    let value = iter.next().ok_or_else(|| {
+                        CliError::Message("--backend requires a value".to_string())
+                    })?;
+                    backend = Some(value);
+                }
+                "--list-backends" => {
+                    list_backends = true;
+                }
+                _ if arg.starts_with('-') => {
+                    return Err(CliError::Message(format!("unknown flag '{arg}'")));
+                }
+                _ => {
+                    if input.is_none() {
+                        input = Some(PathBuf::from(arg));
+                    } else if backend.is_none() {
+                        backend = Some(arg);
+                    } else {
+                        return Err(CliError::Message(format!("unexpected argument '{arg}'")));
+                    }
+                }
+            }
+        }
+
+        Ok(Args {
+            input,
+            backend,
+            list_backends,
+        })
+    }
+
+    fn print_usage() {
+        eprintln!("Usage:");
+        eprintln!(
+            "  video_cvpixelbuffer --input <path> [--backend <name>] [--list-backends]\n\
+   (or) video_cvpixelbuffer <path> [backend]"
+        );
+    }
+
+    fn print_backends() {
+        let backends = Configuration::available_backends();
+        if backends.is_empty() {
+            println!("No compiled backends available.");
+            return;
+        }
+        println!(
+            "Available backends: {}",
+            backends
+                .iter()
+                .map(|backend| backend.as_str())
+                .collect::<Vec<&str>>()
+                .join(", ")
+        );
     }
 }
 

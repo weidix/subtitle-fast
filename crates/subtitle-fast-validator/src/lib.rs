@@ -5,5 +5,5 @@ mod detection;
 mod validator;
 
 pub use config::{FrameValidatorConfig, SubtitleDetectionOptions};
-pub use subtitle_detection::RoiConfig;
+pub use subtitle_detection::{Configuration, RoiConfig};
 pub use validator::FrameValidator;

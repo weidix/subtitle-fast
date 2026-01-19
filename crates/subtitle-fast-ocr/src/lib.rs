@@ -1,3 +1,4 @@
+mod backend;
 mod backends;
 mod engine;
 mod error;
@@ -6,6 +7,7 @@ mod region;
 mod request;
 mod response;
 
+pub use backend::{Backend, Configuration};
 #[cfg(feature = "engine-ort")]
 pub use backends::ort::{OrtOcrConfig, OrtOcrEngine};
 #[cfg(all(feature = "engine-vision", target_os = "macos"))]

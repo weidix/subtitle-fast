@@ -23,7 +23,10 @@ use crate::settings::{
     self, DecoderFileConfig, DetectionFileConfig, FileConfig, OcrFileConfig, OutputFileConfig,
     RoiFileConfig,
 };
-use subtitle_fast_decoder::Configuration;
+use subtitle_fast_comparator::Configuration as ComparatorConfiguration;
+use subtitle_fast_decoder::Configuration as DecoderConfiguration;
+use subtitle_fast_ocr::Configuration as OcrConfiguration;
+use subtitle_fast_validator::subtitle_detection::Configuration as DetectorConfiguration;
 
 actions!(
     config_text_input,
@@ -1108,7 +1111,7 @@ impl ConfigValues {
             sps: "7".into(),
             target: "230".into(),
             delta: "12".into(),
-            detector_backend: "".into(),
+            detector_backend: "auto".into(),
             comparator: "".into(),
             roi_x: "0.15".into(),
             roi_y: "0.8".into(),
@@ -1190,11 +1193,7 @@ struct ConfigFields {
 
 impl ConfigFields {
     fn new(cx: &mut Context<ConfigWindow>) -> Self {
-        let comparator_options = vec![
-            SelectOption::new("auto", ""),
-            SelectOption::new("bitset-cover", "bitset-cover"),
-            SelectOption::new("sparse-chamfer", "sparse-chamfer"),
-        ];
+        let comparator_options = comparator_options();
         let detector_backend_options = detector_backend_options();
         let decoder_backend_options = decoder_backend_options();
         let ocr_backend_options = ocr_backend_options();
@@ -1203,7 +1202,7 @@ impl ConfigFields {
             sps: cx.new(|cx| TextInput::new(cx, "7", InputKind::Integer)),
             target: cx.new(|cx| TextInput::new(cx, "230", InputKind::Integer)),
             delta: cx.new(|cx| TextInput::new(cx, "12", InputKind::Integer)),
-            detector_backend: cx.new(|_| SelectInput::new(detector_backend_options, "")),
+            detector_backend: cx.new(|_| SelectInput::new(detector_backend_options, "auto")),
             comparator: cx.new(|_| SelectInput::new(comparator_options, "")),
             roi_x: cx.new(|cx| TextInput::new(cx, "0.15", InputKind::Float)),
             roi_y: cx.new(|cx| TextInput::new(cx, "0.8", InputKind::Float)),
@@ -1266,8 +1265,8 @@ impl ConfigFields {
 }
 
 fn decoder_backend_options() -> Vec<SelectOption> {
-    let mut options = vec![SelectOption::new("Default", "")];
-    let available = Configuration::available_backends();
+    let mut options = vec![SelectOption::new("auto", "")];
+    let available = DecoderConfiguration::available_backends();
     for backend in available {
         let name = backend.as_str();
         if name == "mock" && !github_ci_active() {
@@ -1279,28 +1278,46 @@ fn decoder_backend_options() -> Vec<SelectOption> {
 }
 
 fn detector_backend_options() -> Vec<SelectOption> {
-    let mut options = vec![SelectOption::new("Default", "")];
-    options.push(SelectOption::new("auto", "auto"));
-    options.push(SelectOption::new("projection-band", "projection-band"));
-    options.push(SelectOption::new("integral-band", "integral-band"));
-    #[cfg(all(feature = "detector-vision", target_os = "macos"))]
-    {
-        options.push(SelectOption::new("macos-vision", "macos-vision"));
+    let mut options = vec![SelectOption::new("auto", "auto")];
+    let mut available = DetectorConfiguration::available_backends();
+    let order = ["projection-band", "integral-band", "macos-vision"];
+    available.sort_by_key(|backend| {
+        order
+            .iter()
+            .position(|name| *name == backend.as_str())
+            .unwrap_or(order.len())
+    });
+    for backend in available {
+        let name = backend.as_str();
+        options.push(SelectOption::new(name, name));
     }
     options
 }
 
 fn ocr_backend_options() -> Vec<SelectOption> {
     let mut options = vec![SelectOption::new("auto", "auto")];
-    #[cfg(all(feature = "ocr-vision", target_os = "macos"))]
-    {
-        options.push(SelectOption::new("vision", "vision"));
+    let mut available = OcrConfiguration::available_backends();
+    let order = ["vision", "ort", "noop"];
+    available.sort_by_key(|backend| {
+        order
+            .iter()
+            .position(|name| *name == backend.as_str())
+            .unwrap_or(order.len())
+    });
+    for backend in available {
+        let name = backend.as_str();
+        options.push(SelectOption::new(name, name));
     }
-    #[cfg(feature = "ocr-ort")]
-    {
-        options.push(SelectOption::new("ort", "ort"));
+    options
+}
+
+fn comparator_options() -> Vec<SelectOption> {
+    let mut options = vec![SelectOption::new("auto", "")];
+    let available = ComparatorConfiguration::available_backends();
+    for backend in available {
+        let name = backend.as_str();
+        options.push(SelectOption::new(name, name));
     }
-    options.push(SelectOption::new("noop", "noop"));
     options
 }
 

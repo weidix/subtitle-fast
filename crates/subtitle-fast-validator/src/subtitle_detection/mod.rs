@@ -1,4 +1,6 @@
 use std::env;
+use std::fmt;
+use std::str::FromStr;
 use subtitle_fast_types::VideoFrame;
 use thiserror::Error;
 
@@ -63,7 +65,6 @@ pub enum GapFillMode {
 }
 
 trait DetectorBackend {
-    fn kind(&self) -> SubtitleDetectorKind;
     fn ensure_available(
         &self,
         config: &SubtitleDetectionConfig,
@@ -79,10 +80,6 @@ struct VisionBackend;
 
 #[cfg(all(feature = "detector-vision", target_os = "macos"))]
 impl DetectorBackend for VisionBackend {
-    fn kind(&self) -> SubtitleDetectorKind {
-        SubtitleDetectorKind::MacVision
-    }
-
     fn ensure_available(
         &self,
         config: &SubtitleDetectionConfig,
@@ -104,10 +101,6 @@ static VISION_BACKEND: VisionBackend = VisionBackend;
 struct IntegralBandBackend;
 
 impl DetectorBackend for IntegralBandBackend {
-    fn kind(&self) -> SubtitleDetectorKind {
-        SubtitleDetectorKind::IntegralBand
-    }
-
     fn ensure_available(
         &self,
         config: &SubtitleDetectionConfig,
@@ -126,10 +119,6 @@ impl DetectorBackend for IntegralBandBackend {
 struct ProjectionBandBackend;
 
 impl DetectorBackend for ProjectionBandBackend {
-    fn kind(&self) -> SubtitleDetectorKind {
-        SubtitleDetectorKind::ProjectionBand
-    }
-
     fn ensure_available(
         &self,
         config: &SubtitleDetectionConfig,
@@ -189,6 +178,22 @@ impl SubtitleDetectionConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Configuration {
+    pub backend: SubtitleDetectorKind,
+    pub detection: SubtitleDetectionConfig,
+}
+
+impl Configuration {
+    pub fn available_backends() -> Vec<SubtitleDetectorKind> {
+        available_detector_kinds()
+    }
+
+    pub fn create_detector(&self) -> Result<Box<dyn SubtitleDetector>, SubtitleDetectionError> {
+        build_detector(self.backend, self.detection.clone())
+    }
+}
+
 pub fn preflight_detection(kind: SubtitleDetectorKind) -> Result<(), SubtitleDetectionError> {
     let probe_config = build_probe_config();
     match kind {
@@ -245,6 +250,37 @@ impl SubtitleDetectorKind {
             SubtitleDetectorKind::ProjectionBand => "projection-band",
         }
     }
+
+    pub fn available() -> Vec<SubtitleDetectorKind> {
+        available_detector_kinds()
+    }
+}
+
+impl fmt::Display for SubtitleDetectorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for SubtitleDetectorKind {
+    type Err = SubtitleDetectionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(SubtitleDetectorKind::Auto),
+            "integral" | "integral-band" | "integral_band" => {
+                Ok(SubtitleDetectorKind::IntegralBand)
+            }
+            "projection" | "projection-band" | "projection_band" => {
+                Ok(SubtitleDetectorKind::ProjectionBand)
+            }
+            #[cfg(all(feature = "detector-vision", target_os = "macos"))]
+            "vision" | "macos-vision" => Ok(SubtitleDetectorKind::MacVision),
+            _ => Err(SubtitleDetectionError::Unsupported {
+                backend: "unknown-detector",
+            }),
+        }
+    }
 }
 
 pub trait SubtitleDetector: Send + Sync {
@@ -267,7 +303,7 @@ pub fn build_detector(
                 backend_for_kind(kind).ok_or_else(|| SubtitleDetectionError::Unsupported {
                     backend: kind.as_str(),
                 })?;
-            ensure_backend_or_panic(backend, &config);
+            backend.ensure_available(&config)?;
             backend.build(config)
         }
     }
@@ -341,15 +377,6 @@ fn build_auto(
     }))
 }
 
-fn ensure_backend_or_panic(backend: &dyn DetectorBackend, config: &SubtitleDetectionConfig) {
-    if let Err(err) = backend.ensure_available(config) {
-        panic!(
-            "subtitle detection backend '{}' is not available: {err}",
-            backend.kind().as_str()
-        );
-    }
-}
-
 fn ensure_backend_available(
     kind: SubtitleDetectorKind,
     config: &SubtitleDetectionConfig,
@@ -362,4 +389,19 @@ fn ensure_backend_available(
             })?
             .ensure_available(config),
     }
+}
+
+pub fn available_detector_kinds() -> Vec<SubtitleDetectorKind> {
+    let candidates = [
+        SubtitleDetectorKind::IntegralBand,
+        SubtitleDetectorKind::ProjectionBand,
+        SubtitleDetectorKind::MacVision,
+    ];
+    let mut available = Vec::new();
+    for kind in candidates {
+        if preflight_detection(kind).is_ok() {
+            available.push(kind);
+        }
+    }
+    available
 }

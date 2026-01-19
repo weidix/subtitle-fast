@@ -9,23 +9,39 @@ name = "subtitle-fast"
 path = "src/main.rs"
 
 [features]
-default = ["gui", "detector-vision", "ocr-vision", "ocr-ort"]
-gui = ["dep:gpui", "dep:anyhow", "dep:rust-embed"]
+default = ["gui", "detector-all", "ocr-all", "backend-all"]
+gui = ["dep:futures-channel", "dep:gpui", "dep:rust-embed"]
 detector-vision = ["subtitle-fast-validator/detector-vision"]
+detector-all = ["detector-vision"]
+
 ocr-vision = ["subtitle-fast-ocr/engine-vision"]
 ocr-ort = ["subtitle-fast-ocr/engine-ort", "dep:reqwest"]
+ocr-all = ["ocr-vision", "ocr-ort"]
+
+backend-ffmpeg = ["subtitle-fast-decoder/backend-ffmpeg"]
+backend-videotoolbox = ["subtitle-fast-decoder/backend-videotoolbox"]
+backend-mft = ["subtitle-fast-decoder/backend-mft"]
+backend-dxva = ["subtitle-fast-decoder/backend-dxva"]
+backend-all = [
+    "backend-ffmpeg",
+    "backend-videotoolbox",
+    "backend-mft",
+    "backend-dxva",
+]
+
+full = ["gui", "detector-all", "ocr-all", "backend-all"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 directories = "5"
-futures-channel = "0.3"
+futures-channel = { version = "0.3", optional = true }
 futures-util = "0.3"
 indicatif = "0.18"
 subtitle-fast-comparator = { path = "../subtitle-fast-comparator" }
 serde = { version = "1", features = ["derive"] }
-subtitle-fast-decoder = { path = "../subtitle-fast-decoder" }
+subtitle-fast-decoder = { path = "../subtitle-fast-decoder", default-features = false }
 subtitle-fast-validator = { path = "../subtitle-fast-validator", default-features = false }
-subtitle-fast-ocr = { path = "../subtitle-fast-ocr" }
+subtitle-fast-ocr = { path = "../subtitle-fast-ocr", default-features = false }
 subtitle-fast-types = { path = "../subtitle-fast-types" }
 tokio = { version = "1", features = [
     "fs",
@@ -45,7 +61,6 @@ reqwest = { version = "0.12", default-features = false, features = [
 
 # GUI dependencies (optional)
 gpui = { version = "0.2", optional = true }
-anyhow = { version = "1", optional = true }
 rust-embed = { version = "8.7.2", optional = true }
 
 [dev-dependencies]

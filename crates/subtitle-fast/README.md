@@ -40,15 +40,18 @@ These diagnostics are invaluable when tuning detection thresholds or validating 
 
 ## Feature flags and platforms
 
-- Decoder backends are toggled through features on `subtitle-fast-decoder` (`backend-ffmpeg`, `backend-videotoolbox`,
-  `backend-dxva`, `backend-mft`, or the always-available mock backend).
-- OCR support depends on the target: macOS builds can enable Apple Vision (`ocr-vision`), and all platforms can use ONNX Runtime + PP-OCRv5 (`ocr-ort`).
+- Defaults are minimal: `default = []` builds the CLI with the mock decoder and Noop OCR.
+- Decoder backends are enabled via `backend-*` features on this crate (pass-through to `subtitle-fast-decoder`), such as
+  `backend-ffmpeg`, `backend-videotoolbox`, `backend-dxva`, `backend-mft`, or `backend-all`.
+- OCR support depends on the target: macOS builds can enable Apple Vision (`ocr-vision`), and all platforms can use
+  ONNX Runtime + PP-OCRv5 (`ocr-ort`). `ocr-all` enables both.
+- The optional GUI build is behind `gui`. `full` is a convenience alias for `gui + backend-all + detector-vision + ocr-all`.
 - Debug helpers are available on all platforms and require no extra features.
 
 ## Running the binary
 
 ```bash
-cargo run --release -- \
+cargo run --release --features backend-ffmpeg,ocr-ort -- \
   --output subtitles.srt \
   --detection-samples-per-second 7 \
   --ocr-backend auto \

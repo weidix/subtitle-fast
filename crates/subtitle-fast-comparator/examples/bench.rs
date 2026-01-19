@@ -1,3 +1,9 @@
+//! Usage:
+//! cargo run -p subtitle-fast-comparator --example bench -- \
+//!   --yuv-dir ./demo/decoder/yuv --roi-dir ./demo/validator/projection \
+//!   --comparators sparse-chamfer,bitset-cover
+
+use std::env;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -5,19 +11,23 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use subtitle_fast_comparator::{
-    ComparatorFactory, ComparatorKind, ComparatorSettings, PreprocessSettings,
-};
+use subtitle_fast_comparator::{Backend, Configuration, PreprocessSettings};
 
 #[path = "common/roi_examples.rs"]
 mod roi_examples;
 
 use roi_examples::{load_frame, load_rois};
 
-const YUV_DIR: &str = "./demo/decoder/yuv";
-const ROI_DIR: &str = "./demo/validator/projection";
-const COMPARATORS: &[ComparatorKind] =
-    &[ComparatorKind::SparseChamfer, ComparatorKind::BitsetCover];
+struct Args {
+    yuv_dir: PathBuf,
+    roi_dir: PathBuf,
+    comparators: Vec<Backend>,
+}
+
+enum CliError {
+    HelpRequested,
+    Message(String),
+}
 
 #[derive(Debug, Clone, Copy)]
 struct BenchStats {
@@ -30,7 +40,20 @@ struct BenchStats {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let json_files = collect_roi_json(ROI_DIR)?;
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(CliError::HelpRequested) => {
+            print_usage();
+            return Ok(());
+        }
+        Err(CliError::Message(message)) => {
+            eprintln!("{message}");
+            print_usage();
+            return Err(message.into());
+        }
+    };
+
+    let json_files = collect_roi_json(&args.roi_dir)?;
     if json_files.is_empty() {
         return Err("no ROI JSON files found for benchmark".into());
     }
@@ -44,15 +67,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut handles = Vec::new();
 
-    for &kind in COMPARATORS {
+    for &kind in &args.comparators {
         let json_files = json_files.clone();
         let bar = multi.add(ProgressBar::new(json_files.len() as u64));
         bar.set_style(style.clone());
         bar.set_prefix(kind.as_str().to_string());
         bar.set_message("roi ext=0.000ms cmp=0.000ms tot=0.000ms");
 
-        let handle = thread::spawn(move || -> Result<(ComparatorKind, BenchStats), String> {
-            match run_comparator_bench(&json_files, kind, bar) {
+        let yuv_dir = args.yuv_dir.clone();
+        let handle = thread::spawn(move || -> Result<(Backend, BenchStats), String> {
+            match run_comparator_bench(&json_files, &yuv_dir, kind, bar) {
                 Ok(stats) => Ok((kind, stats)),
                 Err(err) => Err(format!("comparator '{}' failed: {err}", kind.as_str())),
             }
@@ -82,7 +106,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!(
         "\nComparator benchmark summary over ROI data in {:?}:",
-        ROI_DIR
+        args.roi_dir
     );
     for (kind, stats) in results {
         println!(
@@ -100,9 +124,89 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn parse_args() -> Result<Args, CliError> {
+    let mut yuv_dir = PathBuf::from("./demo/decoder/yuv");
+    let mut roi_dir = PathBuf::from("./demo/validator/projection");
+    let mut comparators = Vec::new();
+    let mut iter = env::args().skip(1);
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Err(CliError::HelpRequested),
+            "--yuv-dir" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--yuv-dir requires a value".to_string()))?;
+                yuv_dir = PathBuf::from(value);
+            }
+            "--roi-dir" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--roi-dir requires a value".to_string()))?;
+                roi_dir = PathBuf::from(value);
+            }
+            "--comparators" => {
+                let value = iter.next().ok_or_else(|| {
+                    CliError::Message("--comparators requires a value".to_string())
+                })?;
+                comparators.extend(parse_comparator_list(&value)?);
+            }
+            "--comparator" => {
+                let value = iter.next().ok_or_else(|| {
+                    CliError::Message("--comparator requires a value".to_string())
+                })?;
+                comparators.push(parse_comparator(&value)?);
+            }
+            _ if arg.starts_with('-') => {
+                return Err(CliError::Message(format!("unknown flag '{arg}'")));
+            }
+            _ => {
+                comparators.push(parse_comparator(&arg)?);
+            }
+        }
+    }
+
+    if comparators.is_empty() {
+        comparators = default_comparators();
+    }
+
+    Ok(Args {
+        yuv_dir,
+        roi_dir,
+        comparators,
+    })
+}
+
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!(
+        "  bench [--yuv-dir <dir>] [--roi-dir <dir>] [--comparators <list>]\n\
+       [--comparator <name>...]"
+    );
+}
+
+fn parse_comparator_list(value: &str) -> Result<Vec<Backend>, CliError> {
+    value
+        .split(',')
+        .filter(|item| !item.trim().is_empty())
+        .map(parse_comparator)
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn parse_comparator(value: &str) -> Result<Backend, CliError> {
+    value
+        .parse::<Backend>()
+        .map_err(|err| CliError::Message(format!("invalid comparator '{value}': {err}")))
+}
+
+fn default_comparators() -> Vec<Backend> {
+    vec![Backend::SparseChamfer, Backend::BitsetCover]
+}
+
 fn run_comparator_bench(
     json_files: &[PathBuf],
-    kind: ComparatorKind,
+    yuv_dir: &Path,
+    kind: Backend,
     bar: ProgressBar,
 ) -> Result<BenchStats, Box<dyn Error>> {
     let mut frames = 0u64;
@@ -115,7 +219,7 @@ fn run_comparator_bench(
             .file_stem()
             .and_then(|s| s.to_str())
             .ok_or("failed to read JSON file name")?;
-        let yuv_path = PathBuf::from(YUV_DIR).join(format!("{stem}.yuv"));
+        let yuv_path = yuv_dir.join(format!("{stem}.yuv"));
         if !yuv_path.exists() {
             eprintln!("skipping frame {stem}: missing YUV at {:?}", yuv_path);
             bar.inc(1);
@@ -128,12 +232,11 @@ fn run_comparator_bench(
             target: selection.luma_band.target,
             delta: selection.luma_band.delta,
         };
-        let comparator = ComparatorFactory::new(ComparatorSettings {
-            kind,
-            target: preprocess.target,
-            delta: preprocess.delta,
-        })
-        .build();
+        let configuration = Configuration {
+            backend: kind,
+            preprocess,
+        };
+        let comparator = configuration.create_comparator();
 
         let frame = load_frame(&yuv_path, selection.frame_width, selection.frame_height)?;
 
@@ -187,9 +290,9 @@ fn run_comparator_bench(
     })
 }
 
-fn collect_roi_json(dir: &str) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+fn collect_roi_json(dir: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
     let mut files = Vec::new();
-    for entry in fs::read_dir(Path::new(dir))? {
+    for entry in fs::read_dir(dir)? {
         let path = entry?.path();
         if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
             files.push(path);

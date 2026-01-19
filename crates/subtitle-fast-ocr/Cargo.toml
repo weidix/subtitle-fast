@@ -5,9 +5,10 @@ edition = "2024"
 build = "build.rs"
 
 [features]
-default = ["engine-vision", "engine-ort"]
+default = []
 engine-vision = []
 engine-ort = ["dep:ndarray", "dep:ort"]
+engine-all = ["engine-vision", "engine-ort"]
 
 [dependencies]
 subtitle-fast-types = { path = "../subtitle-fast-types" }

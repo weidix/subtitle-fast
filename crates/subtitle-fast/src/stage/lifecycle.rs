@@ -13,7 +13,7 @@ use super::determiner::{
 use super::sampler::{FrameHistory, SampledFrame, SamplerContext};
 use crate::settings::DetectionSettings;
 use subtitle_fast_comparator::{
-    ComparatorFactory, ComparatorKind, ComparatorSettings, FeatureBlob, SubtitleComparator,
+    Backend, Configuration, FeatureBlob, PreprocessSettings, SubtitleComparator,
 };
 use subtitle_fast_types::{RoiConfig, VideoFrame};
 
@@ -57,19 +57,20 @@ pub struct RegionTimings {
 }
 
 pub struct RegionLifecycleTracker {
-    comparator_factory: ComparatorFactory,
+    configuration: Configuration,
 }
 
 impl RegionLifecycleTracker {
     pub fn new(settings: &DetectionSettings) -> Self {
-        let comparator_kind = settings.comparator.unwrap_or(ComparatorKind::BitsetCover);
-        let comparator_settings = ComparatorSettings {
-            kind: comparator_kind,
-            target: settings.target,
-            delta: settings.delta,
+        let comparator_backend = settings.comparator.unwrap_or(Backend::BitsetCover);
+        let configuration = Configuration {
+            backend: comparator_backend,
+            preprocess: PreprocessSettings {
+                target: settings.target,
+                delta: settings.delta,
+            },
         };
-        let comparator_factory = ComparatorFactory::new(comparator_settings);
-        Self { comparator_factory }
+        Self { configuration }
     }
 
     pub fn attach(
@@ -81,11 +82,11 @@ impl RegionLifecycleTracker {
             total_frames,
         } = input;
 
-        let comparator_factory = self.comparator_factory;
+        let configuration = self.configuration;
         let (tx, rx) = mpsc::channel::<LifecycleResult>(REGION_TRACKER_CHANNEL_CAPACITY);
 
         tokio::spawn(async move {
-            let comparator = comparator_factory.build();
+            let comparator = configuration.create_comparator();
             let mut worker = RegionLifecycleWorker::new(comparator);
             let mut upstream = stream;
 

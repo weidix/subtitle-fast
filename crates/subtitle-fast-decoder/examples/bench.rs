@@ -1,3 +1,8 @@
+//! Usage:
+//! cargo run -p subtitle-fast-decoder --example bench --features backend-all -- \
+//!   --input ./demo/video1_30s.mp4
+
+use std::env;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -6,18 +11,48 @@ use indicatif::{ProgressBar, ProgressStyle};
 use subtitle_fast_decoder::{Backend, Configuration, OutputFormat};
 use tokio_stream::StreamExt;
 
-const INPUT_VIDEO: &str = "./demo/video1_30s.mp4";
+struct Args {
+    input: Option<PathBuf>,
+    include_mock: bool,
+    list_backends: bool,
+}
+
+enum CliError {
+    HelpRequested,
+    Message(String),
+}
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let input_path = PathBuf::from(INPUT_VIDEO);
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(CliError::HelpRequested) => {
+            print_usage();
+            return Ok(());
+        }
+        Err(CliError::Message(message)) => {
+            eprintln!("{message}");
+            print_usage();
+            return Err(message.into());
+        }
+    };
+
+    if args.list_backends {
+        print_backends();
+        return Ok(());
+    }
+
+    let input_path = args
+        .input
+        .ok_or("missing input path (use --input <path>)")?;
     if !input_path.exists() {
         return Err(format!("input file {:?} does not exist", input_path).into());
     }
 
     let mut backends = Configuration::available_backends();
-    // Skip mock backend; we only care about real decoders here.
-    backends.retain(|b| !matches!(b, Backend::Mock));
+    if !args.include_mock {
+        backends.retain(|backend| !matches!(backend, Backend::Mock));
+    }
 
     if backends.is_empty() {
         return Err(
@@ -63,6 +98,71 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn parse_args() -> Result<Args, CliError> {
+    let mut input = None;
+    let mut include_mock = false;
+    let mut list_backends = false;
+    let mut iter = env::args().skip(1);
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Err(CliError::HelpRequested),
+            "--input" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--input requires a value".to_string()))?;
+                input = Some(PathBuf::from(value));
+            }
+            "--include-mock" => {
+                include_mock = true;
+            }
+            "--list-backends" => {
+                list_backends = true;
+            }
+            _ if arg.starts_with('-') => {
+                return Err(CliError::Message(format!("unknown flag '{arg}'")));
+            }
+            _ => {
+                if input.is_none() {
+                    input = Some(PathBuf::from(arg));
+                } else {
+                    return Err(CliError::Message(format!("unexpected argument '{arg}'")));
+                }
+            }
+        }
+    }
+
+    Ok(Args {
+        input,
+        include_mock,
+        list_backends,
+    })
+}
+
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!(
+        "  bench --input <path> [--include-mock] [--list-backends]\n\
+   (or) bench <path>"
+    );
+}
+
+fn print_backends() {
+    let backends = Configuration::available_backends();
+    if backends.is_empty() {
+        println!("No compiled backends available.");
+        return;
+    }
+    println!(
+        "Available backends: {}",
+        backends
+            .iter()
+            .map(|backend| backend.as_str())
+            .collect::<Vec<&str>>()
+            .join(", ")
+    );
 }
 
 async fn run_backend_bench(

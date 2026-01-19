@@ -1,3 +1,9 @@
+//! Usage:
+//! cargo run -p subtitle-fast-validator --example dump --features detector-vision -- \
+//!   --yuv-dir ./demo/decoder/yuv --out-dir ./demo/validator \
+//!   --target 235 --delta 12 --detectors integral,projection,vision
+
+use std::env;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
@@ -7,23 +13,24 @@ use image::{Rgb, RgbImage};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde_json::json;
 use subtitle_fast_types::VideoFrame;
-#[cfg(all(feature = "detector-vision", target_os = "macos"))]
-use subtitle_fast_validator::subtitle_detection::VisionTextDetector;
-use subtitle_fast_validator::subtitle_detection::projection_band::ProjectionBandDetector;
 use subtitle_fast_validator::subtitle_detection::{
-    DetectionRegion, IntegralBandDetector, LumaBandConfig, RoiConfig, SubtitleDetectionConfig,
-    SubtitleDetectionError, SubtitleDetector,
+    Configuration, DetectionRegion, LumaBandConfig, RoiConfig, SubtitleDetectionConfig,
+    SubtitleDetectionError, SubtitleDetector, SubtitleDetectorKind,
 };
 
-const TARGET: u8 = 235;
-const DELTA: u8 = 12;
-const PRESETS: &[(usize, usize)] = &[(1920, 1080), (1920, 824)];
-const YUV_DIR: &str = "./demo/decoder/yuv";
-const OUT_DIR: &str = "./demo/validator";
-#[cfg(all(feature = "detector-vision", target_os = "macos"))]
-const DETECTORS: &[&str] = &["integral", "projection", "vision"];
-#[cfg(not(all(feature = "detector-vision", target_os = "macos")))]
-const DETECTORS: &[&str] = &["integral", "projection"];
+struct Args {
+    yuv_dir: PathBuf,
+    out_dir: PathBuf,
+    target: u8,
+    delta: u8,
+    detectors: Vec<SubtitleDetectorKind>,
+    presets: Vec<(usize, usize)>,
+}
+
+enum CliError {
+    HelpRequested,
+    Message(String),
+}
 
 const DIGIT_WIDTH: i32 = 3;
 const DIGIT_HEIGHT: i32 = 5;
@@ -31,7 +38,24 @@ const LABEL_SCALE: i32 = 5;
 const LABEL_SPACING: i32 = LABEL_SCALE;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let yuv_dir = PathBuf::from(YUV_DIR);
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(CliError::HelpRequested) => {
+            print_usage();
+            return Ok(());
+        }
+        Err(CliError::Message(message)) => {
+            eprintln!("{message}");
+            print_usage();
+            return Err(message.into());
+        }
+    };
+
+    if args.detectors.is_empty() {
+        return Err("no detectors selected".into());
+    }
+
+    let yuv_dir = args.yuv_dir;
     if !yuv_dir.exists() {
         return Err(format!("missing {:?}", yuv_dir).into());
     }
@@ -58,22 +82,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     .progress_chars("█▉▊▋▌▍▎▏  ");
     let mut handles = Vec::new();
 
-    for detector_name in DETECTORS {
+    for detector_kind in &args.detectors {
         let frames = frames.clone();
-        let detector_name = detector_name.to_string();
+        let kind = *detector_kind;
+        let target = args.target;
+        let delta = args.delta;
+        let presets = args.presets.clone();
+        let out_dir = args.out_dir.clone();
+        let label = detector_label(kind);
 
         let bar = progress.add(ProgressBar::new(total_frames as u64));
         bar.set_style(style.clone());
-        bar.set_prefix(detector_name.clone());
+        bar.set_prefix(label.to_string());
 
         let handle = thread::spawn(move || -> Result<usize, Box<dyn Error + Send + Sync>> {
-            let out_dir = PathBuf::from(OUT_DIR).join(&detector_name);
+            let out_dir = out_dir.join(label);
             fs::create_dir_all(&out_dir)?;
 
             let mut processed = 0usize;
             for path in frames {
                 let data = fs::read(&path)?;
-                let (width, height) = match resolution_from_len(data.len()) {
+                let (width, height) = match resolution_from_len(data.len(), &presets) {
                     Some(dim) => dim,
                     None => {
                         eprintln!(
@@ -110,12 +139,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     width: 1.0,
                     height: 1.0,
                 };
-                config.luma_band = LumaBandConfig {
-                    target: TARGET,
-                    delta: DELTA,
-                };
+                config.luma_band = LumaBandConfig { target, delta };
                 let roi = config.roi;
-                let detector = build_detector(&detector_name, config)?;
+                let detector = build_dump_detector(kind, config)?;
                 let result = detector.detect(&frame)?;
 
                 let mut image = frame_to_image(&frame);
@@ -142,11 +168,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .collect();
 
                 let report = json!({
-                    "detector": detector_name,
+                    "detector": label,
                     "source": path.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
                     "frame": { "width": width, "height": height },
                     "roi": { "x": roi.x, "y": roi.y, "width": roi.width, "height": roi.height },
-                    "luma_band": { "target": TARGET, "delta": DELTA },
+                    "luma_band": { "target": target, "delta": delta },
                     "has_subtitle": result.has_subtitle,
                     "max_score": result.max_score,
                     "regions": regions_with_index,
@@ -190,8 +216,141 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn resolution_from_len(len: usize) -> Option<(usize, usize)> {
-    PRESETS.iter().copied().find(|(w, h)| {
+fn parse_args() -> Result<Args, CliError> {
+    let mut yuv_dir = PathBuf::from("./demo/decoder/yuv");
+    let mut out_dir = PathBuf::from("./demo/validator");
+    let mut target = 235u8;
+    let mut delta = 12u8;
+    let mut detectors = Vec::new();
+    let mut presets = Vec::new();
+    let mut iter = env::args().skip(1);
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Err(CliError::HelpRequested),
+            "--yuv-dir" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--yuv-dir requires a value".to_string()))?;
+                yuv_dir = PathBuf::from(value);
+            }
+            "--out-dir" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--out-dir requires a value".to_string()))?;
+                out_dir = PathBuf::from(value);
+            }
+            "--target" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--target requires a value".to_string()))?;
+                target = value
+                    .parse::<u8>()
+                    .map_err(|_| CliError::Message("--target must be 0-255".to_string()))?;
+            }
+            "--delta" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--delta requires a value".to_string()))?;
+                delta = value
+                    .parse::<u8>()
+                    .map_err(|_| CliError::Message("--delta must be 0-255".to_string()))?;
+            }
+            "--detectors" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--detectors requires a value".to_string()))?;
+                detectors.extend(parse_detector_list(&value)?);
+            }
+            "--detector" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--detector requires a value".to_string()))?;
+                detectors.push(parse_detector(&value)?);
+            }
+            "--preset" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--preset requires a value".to_string()))?;
+                presets.push(parse_preset(&value)?);
+            }
+            _ if arg.starts_with('-') => {
+                return Err(CliError::Message(format!("unknown flag '{arg}'")));
+            }
+            _ => {
+                detectors.push(parse_detector(&arg)?);
+            }
+        }
+    }
+
+    if detectors.is_empty() {
+        detectors = Configuration::available_backends();
+    }
+    if presets.is_empty() {
+        presets = default_presets();
+    }
+
+    Ok(Args {
+        yuv_dir,
+        out_dir,
+        target,
+        delta,
+        detectors,
+        presets,
+    })
+}
+
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!(
+        "  dump [--yuv-dir <dir>] [--out-dir <dir>] [--target <u8>] [--delta <u8>]\n\
+       [--detectors <list>] [--detector <name>...] [--preset <WxH>]"
+    );
+}
+
+fn parse_detector_list(value: &str) -> Result<Vec<SubtitleDetectorKind>, CliError> {
+    value
+        .split(',')
+        .filter(|item| !item.trim().is_empty())
+        .map(parse_detector)
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn parse_detector(value: &str) -> Result<SubtitleDetectorKind, CliError> {
+    value
+        .parse::<SubtitleDetectorKind>()
+        .map_err(|_| CliError::Message(format!("unknown detector '{value}'")))
+}
+
+fn parse_preset(value: &str) -> Result<(usize, usize), CliError> {
+    let cleaned = value.trim();
+    let (w, h) = cleaned
+        .split_once('x')
+        .ok_or_else(|| CliError::Message("preset must be in WxH format".to_string()))?;
+    let width = w
+        .parse::<usize>()
+        .map_err(|_| CliError::Message("preset width must be a number".to_string()))?;
+    let height = h
+        .parse::<usize>()
+        .map_err(|_| CliError::Message("preset height must be a number".to_string()))?;
+    Ok((width, height))
+}
+
+fn default_presets() -> Vec<(usize, usize)> {
+    vec![(1920, 1080), (1920, 824)]
+}
+
+fn detector_label(kind: SubtitleDetectorKind) -> &'static str {
+    match kind {
+        SubtitleDetectorKind::IntegralBand => "integral",
+        SubtitleDetectorKind::ProjectionBand => "projection",
+        SubtitleDetectorKind::MacVision => "vision",
+        SubtitleDetectorKind::Auto => "auto",
+    }
+}
+
+fn resolution_from_len(len: usize, presets: &[(usize, usize)]) -> Option<(usize, usize)> {
+    presets.iter().copied().find(|(w, h)| {
         let y_len = w * h;
         let uv_rows = h.div_ceil(2);
         let uv_len = w * uv_rows;
@@ -219,104 +378,58 @@ fn overlay_regions(image: &mut RgbImage, regions: &[DetectionRegion]) {
 }
 
 fn draw_box(image: &mut RgbImage, region: &DetectionRegion) {
-    let width = image.width() as f32;
-    let height = image.height() as f32;
-    let x0 = region.x.max(0.0).min(width - 1.0) as i32;
-    let y0 = region.y.max(0.0).min(height - 1.0) as i32;
-    let x1 = (region.x + region.width).max(0.0).min(width - 1.0) as i32;
-    let y1 = (region.y + region.height).max(0.0).min(height - 1.0) as i32;
-    if x0 >= x1 || y0 >= y1 {
-        return;
+    let width = image.width() as i32;
+    let height = image.height() as i32;
+
+    let left = (region.x * width as f32).round() as i32;
+    let top = (region.y * height as f32).round() as i32;
+    let right = ((region.x + region.width) * width as f32).round() as i32;
+    let bottom = ((region.y + region.height) * height as f32).round() as i32;
+
+    for x in left..right {
+        set_pixel(image, x, top);
+        set_pixel(image, x, bottom);
     }
-    for x in x0..=x1 {
-        set_pixel(image, x, y0);
-        set_pixel(image, x, y1);
-    }
-    for y in y0..=y1 {
-        set_pixel(image, x0, y);
-        set_pixel(image, x1, y);
+    for y in top..bottom {
+        set_pixel(image, left, y);
+        set_pixel(image, right, y);
     }
 }
 
 fn draw_label(image: &mut RgbImage, region: &DetectionRegion, index: usize) {
-    let label = index.to_string();
     let width = image.width() as i32;
     let height = image.height() as i32;
-    let digit_w = DIGIT_WIDTH * LABEL_SCALE;
-    let digit_h = DIGIT_HEIGHT * LABEL_SCALE;
-    let total_width = label.len() as i32 * (digit_w + LABEL_SPACING) - LABEL_SPACING;
-    let mut x = region.x.max(0.0) as i32 + 2;
-    let mut y = region.y.max(0.0) as i32 + 2;
 
-    if y + digit_h >= height {
-        y = (height - (digit_h + 1)).max(0);
-    }
-    if x + total_width >= width {
-        x = (width - (total_width + 1)).max(0);
-    }
+    let left = (region.x * width as f32).round() as i32;
+    let top = (region.y * height as f32).round() as i32;
 
-    fill_rect(
-        image,
-        x - 1,
-        y - 1,
-        total_width + 2,
-        digit_h + 2,
-        Rgb([0, 0, 0]),
-    );
+    let text = format!("{index}");
+    let label_width = (DIGIT_WIDTH * text.len() as i32 + LABEL_SPACING) * LABEL_SCALE;
+    let label_height = DIGIT_HEIGHT * LABEL_SCALE;
 
-    for ch in label.chars() {
-        draw_digit(image, x, y, ch);
-        x += digit_w + LABEL_SPACING;
+    let x0 = (left - label_width - LABEL_SPACING).max(0);
+    let y0 = (top - label_height - LABEL_SPACING).max(0);
+
+    for (offset, ch) in text.chars().enumerate() {
+        let digit = ch.to_digit(10).unwrap_or(0) as usize;
+        let digit_x = x0 + offset as i32 * (DIGIT_WIDTH + 1) * LABEL_SCALE;
+        draw_digit(image, digit, digit_x, y0);
     }
 }
 
-fn draw_digit(image: &mut RgbImage, x: i32, y: i32, ch: char) {
-    let bitmap: [[u8; 3]; 5] = match ch {
-        '0' => [[1, 1, 1], [1, 0, 1], [1, 0, 1], [1, 0, 1], [1, 1, 1]],
-        '1' => [[0, 1, 0], [1, 1, 0], [0, 1, 0], [0, 1, 0], [1, 1, 1]],
-        '2' => [[1, 1, 1], [0, 0, 1], [1, 1, 1], [1, 0, 0], [1, 1, 1]],
-        '3' => [[1, 1, 1], [0, 0, 1], [0, 1, 1], [0, 0, 1], [1, 1, 1]],
-        '4' => [[1, 0, 1], [1, 0, 1], [1, 1, 1], [0, 0, 1], [0, 0, 1]],
-        '5' => [[1, 1, 1], [1, 0, 0], [1, 1, 1], [0, 0, 1], [1, 1, 1]],
-        '6' => [[1, 1, 1], [1, 0, 0], [1, 1, 1], [1, 0, 1], [1, 1, 1]],
-        '7' => [[1, 1, 1], [0, 0, 1], [0, 1, 0], [0, 1, 0], [0, 1, 0]],
-        '8' => [[1, 1, 1], [1, 0, 1], [1, 1, 1], [1, 0, 1], [1, 1, 1]],
-        '9' => [[1, 1, 1], [1, 0, 1], [1, 1, 1], [0, 0, 1], [1, 1, 1]],
-        _ => [[0, 0, 0]; 5],
-    };
-    let color = Rgb([255, 255, 0]);
-    for (dy, row) in bitmap.iter().enumerate() {
-        for (dx, &on) in row.iter().enumerate() {
-            if on == 1 {
-                for sy in 0..LABEL_SCALE {
-                    for sx in 0..LABEL_SCALE {
-                        set_pixel_color(
-                            image,
-                            x + dx as i32 * LABEL_SCALE + sx,
-                            y + dy as i32 * LABEL_SCALE + sy,
-                            color,
-                        );
+fn draw_digit(image: &mut RgbImage, digit: usize, x0: i32, y0: i32) {
+    let pattern = DIGITS[digit % DIGITS.len()];
+    for (y, row) in pattern.iter().enumerate() {
+        for (x, &on) in row.iter().enumerate() {
+            if on {
+                let px = x0 + x as i32 * LABEL_SCALE;
+                let py = y0 + y as i32 * LABEL_SCALE;
+                for dy in 0..LABEL_SCALE {
+                    for dx in 0..LABEL_SCALE {
+                        set_pixel(image, px + dx, py + dy);
                     }
                 }
             }
-        }
-    }
-}
-
-fn set_pixel_color(image: &mut RgbImage, x: i32, y: i32, color: Rgb<u8>) {
-    if x < 0 || y < 0 {
-        return;
-    }
-    let (x, y) = (x as u32, y as u32);
-    if x < image.width() && y < image.height() {
-        image.put_pixel(x, y, color);
-    }
-}
-
-fn fill_rect(image: &mut RgbImage, x: i32, y: i32, width: i32, height: i32, color: Rgb<u8>) {
-    for dy in 0..height {
-        for dx in 0..width {
-            set_pixel_color(image, x + dx, y + dy, color);
         }
     }
 }
@@ -331,24 +444,86 @@ fn set_pixel(image: &mut RgbImage, x: i32, y: i32) {
     }
 }
 
-fn build_detector(
-    name: &str,
+fn build_dump_detector(
+    kind: SubtitleDetectorKind,
     config: SubtitleDetectionConfig,
 ) -> Result<Box<dyn SubtitleDetector>, SubtitleDetectionError> {
-    match name {
-        "integral" => Ok(Box::new(IntegralBandDetector::new(config)?)),
-        "projection" => Ok(Box::new(ProjectionBandDetector::new(config)?)),
-        #[cfg(all(feature = "detector-vision", target_os = "macos"))]
-        "vision" => Ok(Box::new(VisionTextDetector::new(config)?)),
-        #[cfg(not(all(feature = "detector-vision", target_os = "macos")))]
-        "vision" => Err(SubtitleDetectionError::Unsupported {
-            backend: "vision-detector",
-        }),
-        other => {
-            eprintln!("unknown detector '{other}', defaulting to unsupported error");
-            Err(SubtitleDetectionError::Unsupported {
-                backend: "unknown-detector",
-            })
-        }
-    }
+    let configuration = Configuration {
+        backend: kind,
+        detection: config,
+    };
+    configuration.create_detector()
 }
+
+const DIGITS: [[[bool; DIGIT_WIDTH as usize]; DIGIT_HEIGHT as usize]; 10] = [
+    [
+        [true, true, true],
+        [true, false, true],
+        [true, false, true],
+        [true, false, true],
+        [true, true, true],
+    ],
+    [
+        [false, true, false],
+        [true, true, false],
+        [false, true, false],
+        [false, true, false],
+        [true, true, true],
+    ],
+    [
+        [true, true, true],
+        [false, false, true],
+        [true, true, true],
+        [true, false, false],
+        [true, true, true],
+    ],
+    [
+        [true, true, true],
+        [false, false, true],
+        [true, true, true],
+        [false, false, true],
+        [true, true, true],
+    ],
+    [
+        [true, false, true],
+        [true, false, true],
+        [true, true, true],
+        [false, false, true],
+        [false, false, true],
+    ],
+    [
+        [true, true, true],
+        [true, false, false],
+        [true, true, true],
+        [false, false, true],
+        [true, true, true],
+    ],
+    [
+        [true, true, true],
+        [true, false, false],
+        [true, true, true],
+        [true, false, true],
+        [true, true, true],
+    ],
+    [
+        [true, true, true],
+        [false, false, true],
+        [false, true, false],
+        [false, true, false],
+        [false, true, false],
+    ],
+    [
+        [true, true, true],
+        [true, false, true],
+        [true, true, true],
+        [true, false, true],
+        [true, true, true],
+    ],
+    [
+        [true, true, true],
+        [true, false, true],
+        [true, true, true],
+        [false, false, true],
+        [true, true, true],
+    ],
+];

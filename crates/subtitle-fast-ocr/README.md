@@ -25,8 +25,10 @@ The trait also offers a warm-up hook so engines can preload models or allocate r
 | ------- | ----------- |
 | `engine-vision` | Enables the Apple Vision OCR backend (macOS only). |
 | `engine-ort` | Enables ONNX Runtime + PP-OCRv5 recognition (requires a local ORT build). |
+| `engine-all` | Convenience alias that enables every OCR backend. |
 
-With neither feature enabled the crate only exposes `NoopOcrEngine`, which is useful for pipeline testing without OCR.
+Defaults are minimal (`default = []`). With no engine feature enabled the crate only exposes `NoopOcrEngine`, which is
+useful for pipeline testing without OCR.
 
 ## ORT backend notes
 

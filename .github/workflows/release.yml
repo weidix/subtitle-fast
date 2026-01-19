@@ -167,18 +167,24 @@ jobs:
           FFMPEG_TOOLCHAIN: msvc
         run: ./scripts/build-ffmpeg-min.sh
 
-      - name: Build CLI (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Build CLI (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           cargo build --release --bin subtitle-fast --no-default-features \
-            --features "detector-vision,ocr-vision,ocr-ort"
+            --features "backend-ffmpeg,ocr-ort"
+      - name: Build CLI (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cargo build --release --bin subtitle-fast --no-default-features \
+            --features "backend-videotoolbox,backend-ffmpeg,detector-vision,ocr-vision,ocr-ort"
       - name: Build CLI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cargo build --release --bin subtitle-fast --no-default-features `
-            --features "detector-vision,ocr-vision,ocr-ort"
+            --features "backend-ffmpeg,backend-dxva,backend-mft,ocr-ort"
 
       - name: Package CLI (Linux)
         if: runner.os == 'Linux'
@@ -231,7 +237,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo build --release --bin subtitle-fast
+          cargo build --release --bin subtitle-fast --no-default-features `
+            --features "gui,backend-ffmpeg,backend-dxva,backend-mft,ocr-ort"
 
       - name: Package GUI (Windows)
         if: runner.os == 'Windows'

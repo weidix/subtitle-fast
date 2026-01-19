@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="${APP_NAME:-subtitle-fast}"
-FEATURES="${FEATURES:-gui}"
+FEATURES="${FEATURES:-gui,backend-ffmpeg,ocr-ort}"
 TARGET_DIR="${ROOT_DIR}/target/release"
 DIST_DIR="${ROOT_DIR}/target/bundle/linux"
 WORK_DIR="${ROOT_DIR}/target/work/linux"
@@ -26,7 +26,7 @@ fi
 PACKAGE_KIND="${PACKAGE_KIND:-gui}"
 ARTIFACT_BASENAME="${ARTIFACT_BASENAME:-${APP_NAME}-${PACKAGE_KIND}-${VERSION}-linux-${ARCH_LABEL}}"
 
-cargo build --release --bin subtitle-fast --features "${FEATURES}"
+cargo build --release --bin subtitle-fast --no-default-features --features "${FEATURES}"
 
 rm -rf "${APPDIR}"
 mkdir -p "${APPDIR}/usr/bin" \

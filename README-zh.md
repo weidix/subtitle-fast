@@ -5,26 +5,27 @@ subtitle-fast 是一个 Rust 工作区，用异步流水线把 H.264 视频转�
 ## 快速开始
 
 - 前置依赖：Rust 稳定版；对应平台的原生组件（FFmpeg 库用于 `backend-ffmpeg`，macOS 自带 VideoToolbox，Windows 需 D3D11/DXVA 驱动，Media Foundation 作为回退，Apple Vision 框架用于 `ocr-vision`）。
-- 直接运行（默认启用已编译的解码和 OCR 能力）：
+- 直接运行（显式开启后端与 OCR）：
 
 ```bash
-cargo run --release -- --output subtitles.srt path/to/video.mp4
+cargo run --release --features backend-ffmpeg,ocr-ort \
+  -- --output subtitles.srt path/to/video.mp4
 ```
 
-- 非 macOS 环境可以关闭 mac 默认特性：
+- macOS 示例（VideoToolbox + Vision）：
 
 ```bash
-cargo run --release --no-default-features \
-  -- --backend ffmpeg --output subtitles.srt path/to/video.mp4
+cargo run --release --features backend-videotoolbox,ocr-vision \
+  -- --output subtitles.srt path/to/video.mp4
 ```
 
 ## 后端与特性
 
-- 解码：`backend-ffmpeg`（通用）、`backend-videotoolbox`（macOS 硬解）、`backend-dxva`（Windows D3D11/DXVA 硬解）、`backend-mft`（Windows 回退）、`mock`（始终可用，`--backend mock`）。
-- OCR：`ocr-vision` 启用 Apple Vision（macOS）；`ocr-ort` 启用 ONNX Runtime + PP-OCRv5（全平台）；未启用时可用 noop 引擎做流水线/性能测试。
+- 解码：`backend-ffmpeg`（通用）、`backend-videotoolbox`（macOS 硬解）、`backend-dxva`（Windows D3D11/DXVA 硬解）、`backend-mft`（Windows 回退）、`backend-all`（全部后端）、`mock`（始终可用，`--backend mock`）。
+- OCR：`ocr-vision` 启用 Apple Vision（macOS）；`ocr-ort` 启用 ONNX Runtime + PP-OCRv5（全平台）；`ocr-all` 同时启用两者；未启用时可用 noop 引擎做流水线/性能测试。
 - 检测：`detector-vision`（macOS）。非 macOS 时关闭该特性。
 
-CLI 会按优先级选择首个已编译的解码后端（CI 先 mock；macOS 先 VideoToolbox 后 FFmpeg；Windows 先 DXVA 再 MFT 再 FFmpeg；其他平台 FFmpeg），失败则自动回退，并在下游变慢时保持背压。
+默认特性为空（`default = []`），未开启解码或 OCR 特性时将使用 mock/Noop 以便测试。CLI 会按优先级选择首个已编译的解码后端（CI 先 mock；macOS 先 VideoToolbox 后 FFmpeg；Windows 先 DXVA 再 MFT 再 FFmpeg；其他平台 FFmpeg），失败则自动回退，并在下游变慢时保持背压。
 
 ## 配置
 
@@ -69,4 +70,4 @@ cargo test -p subtitle-fast-decoder --features backend-ffmpeg
 
 ## 性能快照
 
-- 在 Mac mini M4 上，默认特性 (`cargo run --release`) 处理一段 2h01m 的 1080p H.264（High，yuv420p，29.97 fps，约 5.0 Mbps 视频 + AAC 48 kHz 立体声 约 255 kb/s，总码率约 5.26 Mbps）约耗时 1 分 40 秒，全程触发约 3,622 次 OCR 请求。
+- 在 Mac mini M4 上，`cargo run --release --features backend-videotoolbox,ocr-vision` 处理一段 2h01m 的 1080p H.264（High，yuv420p，29.97 fps，约 5.0 Mbps 视频 + AAC 48 kHz 立体声 约 255 kb/s，总码率约 5.26 Mbps）约耗时 1 分 40 秒，全程触发约 3,622 次 OCR 请求。

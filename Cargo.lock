@@ -5446,7 +5446,6 @@ dependencies = [
 name = "subtitle-fast"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clap",
  "directories",
  "embed-resource",
@@ -5492,7 +5491,6 @@ dependencies = [
  "indicatif 0.17.11",
  "parking_lot",
  "png 0.18.0",
- "rayon",
  "subtitle-fast-types",
  "tokio",
  "tokio-stream",

@@ -24,9 +24,10 @@ compiled backend before surfacing the error.
 | `backend-videotoolbox` | Enables hardware-accelerated decoding on macOS. |
 | `backend-dxva` | Uses D3D11/DXVA video decoding on Windows for GPU-backed NV12 output. |
 | `backend-mft` | Enables Windows Media Foundation decoding (Windows only). |
+| `backend-all` | Convenience alias that enables every compiled backend. |
 
-When no feature is enabled, only the lightweight mock backend is compiled. GitHub CI automatically enables the mock backend
-so tests can exercise downstream logic without native dependencies.
+Defaults are minimal (`default = []`). When no backend feature is enabled, only the lightweight mock backend is compiled.
+GitHub CI automatically enables the mock backend so tests can exercise downstream logic without native dependencies.
 
 ### Static FFmpeg bundle (optional)
 - Run `scripts/build-ffmpeg-min.sh` (Bash script) to download and build a trimmed FFmpeg (H.264 decoder + `mov`/`matroska`/`mpegts` demuxers, `buffer`/`buffersink`/`format`/`scale` filters) as static libraries under `target/ffmpeg-min`. Override with `FFMPEG_VERSION`, `PREFIX`, or `BUILD_DIR` as needed.

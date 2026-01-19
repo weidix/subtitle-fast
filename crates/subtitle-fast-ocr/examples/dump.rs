@@ -1,18 +1,46 @@
+//! Usage:
+//! cargo run -p subtitle-fast-ocr --example dump --features engine-all -- \
+//!   --input ./demo/rand_cn2.png --backend ort
+
+use std::env;
 use std::error::Error;
 use std::path::PathBuf;
 
-use subtitle_fast_ocr::{LumaPlane, NoopOcrEngine, OcrEngine, OcrRegion, OcrRequest};
+use subtitle_fast_ocr::{Backend, Configuration, LumaPlane, OcrRegion, OcrRequest};
 
-#[cfg(feature = "engine-ort")]
-use subtitle_fast_ocr::OrtOcrEngine;
-#[cfg(all(feature = "engine-vision", target_os = "macos"))]
-use subtitle_fast_ocr::VisionOcrEngine;
+struct Args {
+    input: Option<PathBuf>,
+    backend: Backend,
+    list_backends: bool,
+}
 
-const INPUT_IMAGE: &str = "./demo/rand_cn2.png";
-const OCR_BACKEND: &str = "ort"; // auto | ort | vision | noop
+enum CliError {
+    HelpRequested,
+    Message(String),
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let input_path = PathBuf::from(INPUT_IMAGE);
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(CliError::HelpRequested) => {
+            print_usage();
+            return Ok(());
+        }
+        Err(CliError::Message(message)) => {
+            eprintln!("{message}");
+            print_usage();
+            return Err(message.into());
+        }
+    };
+
+    if args.list_backends {
+        print_backends();
+        return Ok(());
+    }
+
+    let input_path = args
+        .input
+        .ok_or("missing input path (use --input <path>)")?;
     if !input_path.exists() {
         return Err(format!("input image {:?} does not exist", input_path).into());
     }
@@ -26,7 +54,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let regions = vec![region];
     let request = OcrRequest::new(plane, &regions);
 
-    let engine = build_engine(OCR_BACKEND)?;
+    let config = Configuration {
+        backend: args.backend,
+    };
+    let engine = config.create_engine()?;
     engine.warm_up()?;
 
     let response = engine.recognize(&request)?;
@@ -55,43 +86,76 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn build_engine(name: &str) -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
-    let normalized = name.trim().to_lowercase();
-    match normalized.as_str() {
-        "auto" => build_auto_engine(),
-        "ort" => build_ort_engine(),
-        "vision" => build_vision_engine(),
-        "noop" => Ok(Box::new(NoopOcrEngine)),
-        other => Err(format!("unknown OCR backend '{other}'").into()),
+fn parse_args() -> Result<Args, CliError> {
+    let mut input = None;
+    let mut backend = Backend::Auto;
+    let mut list_backends = false;
+    let mut iter = env::args().skip(1);
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Err(CliError::HelpRequested),
+            "--input" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--input requires a value".to_string()))?;
+                input = Some(PathBuf::from(value));
+            }
+            "--backend" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--backend requires a value".to_string()))?;
+                backend = parse_backend(&value)?;
+            }
+            "--list-backends" => {
+                list_backends = true;
+            }
+            _ if arg.starts_with('-') => {
+                return Err(CliError::Message(format!("unknown flag '{arg}'")));
+            }
+            _ => {
+                if input.is_none() {
+                    input = Some(PathBuf::from(arg));
+                } else {
+                    backend = parse_backend(&arg)?;
+                }
+            }
+        }
     }
+
+    Ok(Args {
+        input,
+        backend,
+        list_backends,
+    })
 }
 
-fn build_auto_engine() -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
-    if let Ok(engine) = build_ort_engine() {
-        return Ok(engine);
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!(
+        "  dump --input <path> [--backend <name>] [--list-backends]\n\
+   (or) dump <path> [backend]"
+    );
+}
+
+fn print_backends() {
+    let backends = Configuration::available_backends();
+    if backends.is_empty() {
+        println!("No compiled OCR backends available.");
+        return;
     }
-    if let Ok(engine) = build_vision_engine() {
-        return Ok(engine);
-    }
-    Ok(Box::new(NoopOcrEngine))
+    println!(
+        "Available OCR backends: {}",
+        backends
+            .iter()
+            .map(|backend| backend.as_str())
+            .collect::<Vec<&str>>()
+            .join(", ")
+    );
 }
 
-#[cfg(feature = "engine-ort")]
-fn build_ort_engine() -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
-    Ok(Box::new(OrtOcrEngine::new()?))
-}
-
-#[cfg(not(feature = "engine-ort"))]
-fn build_ort_engine() -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
-    Err("ort backend not available (feature engine-ort disabled)".into())
-}
-
-#[cfg(all(feature = "engine-vision", target_os = "macos"))]
-fn build_vision_engine() -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
-    Ok(Box::new(VisionOcrEngine::new()?))
-}
-
-#[cfg(not(all(feature = "engine-vision", target_os = "macos")))]
-fn build_vision_engine() -> Result<Box<dyn OcrEngine>, Box<dyn Error>> {
-    Err("vision backend not available on this target".into())
+fn parse_backend(value: &str) -> Result<Backend, CliError> {
+    value
+        .parse::<Backend>()
+        .map_err(|err| CliError::Message(format!("invalid backend '{value}': {err}")))
 }

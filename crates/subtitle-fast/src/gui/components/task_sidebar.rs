@@ -6,8 +6,8 @@ use futures_channel::mpsc::unbounded;
 use futures_util::StreamExt;
 use gpui::prelude::*;
 use gpui::{
-    Bounds, Context, FontWeight, InteractiveElement, MouseButton, Pixels, Render, Task, Window,
-    div, hsla, px, relative, rgb,
+    Background, Bounds, Context, FontWeight, Hsla, InteractiveElement, MouseButton, Pixels, Render,
+    Task, Window, div, hsla, linear_color_stop, linear_gradient, px, rgb,
 };
 use tokio::sync::oneshot;
 use tokio::time::MissedTickBehavior;
@@ -333,6 +333,9 @@ impl Render for TaskSidebar {
                 let is_running = run_state == DetectionRunState::Running;
                 let is_paused = run_state == DetectionRunState::Paused;
                 let completed = progress.completed;
+                let row_bg = if is_active { rgb(0x323232) } else { item_bg };
+                let row_bg_hsla = Hsla::from(row_bg);
+                let hover_bg_hsla = Hsla::from(item_hover_bg);
 
                 let start_enabled = is_idle && !completed;
                 let pause_enabled = is_running || is_paused;
@@ -427,18 +430,26 @@ impl Render for TaskSidebar {
                         .child(icon_sm(Icon::Trash, btn_icon_color).w(px(12.0)).h(px(12.0))),
                 );
 
-                let progress_bg_layer = div()
-                    .absolute()
-                    .left(px(0.0))
-                    .top(px(0.0))
-                    .bottom(px(0.0))
-                    .w(relative(ratio))
-                    .rounded(px(8.0))
-                    .bg(if completed {
-                        hsla(0.0, 0.0, 0.0, 0.0)
-                    } else {
-                        progress_fill
-                    });
+                let progress_fill_color = row_bg_hsla.blend(progress_fill);
+                let progress_hover_color = hover_bg_hsla.blend(progress_fill);
+                let row_background: Background = if completed {
+                    row_bg_hsla.into()
+                } else {
+                    linear_gradient(
+                        90.0,
+                        linear_color_stop(progress_fill_color, ratio),
+                        linear_color_stop(row_bg_hsla, ratio),
+                    )
+                };
+                let row_hover_background: Background = if completed {
+                    hover_bg_hsla.into()
+                } else {
+                    linear_gradient(
+                        90.0,
+                        linear_color_stop(progress_hover_color, ratio),
+                        linear_color_stop(hover_bg_hsla, ratio),
+                    )
+                };
 
                 let item_content = div()
                     .flex()
@@ -494,7 +505,7 @@ impl Render for TaskSidebar {
                     .relative()
                     .h(px(56.0))
                     .rounded(px(8.0))
-                    .bg(if is_active { rgb(0x323232) } else { item_bg })
+                    .bg(row_background)
                     .pl(px(8.0))
                     .pr(px(4.0))
                     .flex()
@@ -507,8 +518,13 @@ impl Render for TaskSidebar {
                             (this.callbacks.on_select)(session_id, window, cx);
                         }),
                     )
-                    .hover(move |s| if !is_active { s.bg(item_hover_bg) } else { s })
-                    .child(progress_bg_layer)
+                    .hover(move |s| {
+                        if !is_active {
+                            s.bg(row_hover_background)
+                        } else {
+                            s
+                        }
+                    })
                     .child(item_content.relative());
 
                 list = list.child(row);

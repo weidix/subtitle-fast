@@ -15,11 +15,10 @@ use crate::gui::components::{
     CollapseDirection, ColorPicker, ConfigWindow, ConfirmDialog, ConfirmDialogButton,
     ConfirmDialogButtonStyle, ConfirmDialogConfig, ConfirmDialogTitle, DetectedSubtitlesList,
     DetectionControls, DetectionHandle, DetectionMetrics, DetectionRunState, DetectionSidebar,
-    DetectionSidebarHost, DragRange, DraggableEdge, FramePreprocessor, HelpWindow, Nv12FrameInfo,
-    Sidebar, SidebarConfig, SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar,
-    TitlebarActions, TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle,
-    VideoPlayer, VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay,
-    VideoToolbar,
+    DetectionSidebarHost, DragRange, DraggableEdge, HelpWindow, Sidebar, SidebarConfig,
+    SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar, TitlebarActions,
+    TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle, VideoPlayer,
+    VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay, VideoToolbar,
 };
 use crate::gui::icons::{Icon, icon_md, icon_sm};
 use crate::gui::menus;
@@ -276,7 +275,6 @@ const SUPPORTED_VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mov", "mkv", "webm", "avi", "m4v", "mpg", "mpeg", "ts",
 ];
 const VIDEO_AREA_HEIGHT_RATIO: f32 = 0.6;
-const REPLAY_PREPROCESSOR_KEY: &str = "replay-blur";
 const SIDEBAR_DRAG_HIT_THICKNESS: f32 = 6.0;
 const SIDEBAR_BORDER_WIDTH: f32 = 1.1;
 const SIDEBAR_BORDER_COLOR: u32 = 0x2b2b2b;
@@ -984,12 +982,10 @@ impl MainWindow {
             return;
         }
         self.replay_visible = visible;
-        if let Some(controls) = self.controls.as_ref() {
-            if visible {
-                controls.set_preprocessor(REPLAY_PREPROCESSOR_KEY, replay_blur_preprocessor());
-            } else {
-                controls.remove_preprocessor(REPLAY_PREPROCESSOR_KEY);
-            }
+        if let Some(player) = self.player.as_ref() {
+            player.update(cx, |player, cx| {
+                player.set_replay_blur_visible(visible, cx);
+            });
         }
         cx.notify();
     }
@@ -1124,6 +1120,7 @@ impl Render for MainWindow {
                                     .flex()
                                     .items_center()
                                     .justify_center()
+                                    .bg(hsla(0.0, 0.0, 0.0, 0.18))
                                     .cursor_pointer()
                                     .child(overlay_label)
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1269,107 +1266,4 @@ fn supported_video_extensions_detail() -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("Supported formats: {list}")
-}
-
-fn replay_blur_preprocessor() -> FramePreprocessor {
-    Arc::new(|y_plane, uv_plane, info| {
-        blur_nv12_plane(y_plane, uv_plane, info, 6);
-        tint_nv12_plane(y_plane, uv_plane);
-        true
-    })
-}
-
-fn blur_nv12_plane(y_plane: &mut [u8], uv_plane: &mut [u8], info: Nv12FrameInfo, passes: usize) {
-    for _ in 0..passes {
-        blur_luma(y_plane, info);
-        blur_chroma(uv_plane, info);
-    }
-}
-
-fn blur_luma(y_plane: &mut [u8], info: Nv12FrameInfo) {
-    let width = info.width as usize;
-    let height = info.height as usize;
-    let stride = info.y_stride;
-    if width == 0 || height == 0 || stride == 0 {
-        return;
-    }
-    if stride.saturating_mul(height) > y_plane.len() {
-        return;
-    }
-
-    let mut out = y_plane.to_vec();
-    for y in 0..height {
-        let y0 = y.saturating_sub(1);
-        let y2 = (y + 1).min(height - 1);
-        for x in 0..width {
-            let x0 = x.saturating_sub(1);
-            let x2 = (x + 1).min(width - 1);
-            let mut sum = 0u32;
-            for yy in [y0, y, y2] {
-                let row = yy * stride;
-                for xx in [x0, x, x2] {
-                    sum += y_plane[row + xx] as u32;
-                }
-            }
-            out[y * stride + x] = (sum / 9) as u8;
-        }
-    }
-    y_plane.copy_from_slice(&out);
-}
-
-fn blur_chroma(uv_plane: &mut [u8], info: Nv12FrameInfo) {
-    let width = info.width as usize;
-    let stride = info.uv_stride;
-    if width == 0 || stride == 0 {
-        return;
-    }
-    let uv_height = uv_plane.len() / stride;
-    if uv_height == 0 {
-        return;
-    }
-    let uv_width = width.div_ceil(2).min(stride / 2);
-    if uv_width == 0 {
-        return;
-    }
-
-    let mut out = uv_plane.to_vec();
-    for y in 0..uv_height {
-        let y0 = y.saturating_sub(1);
-        let y2 = (y + 1).min(uv_height - 1);
-        for x in 0..uv_width {
-            let x0 = x.saturating_sub(1);
-            let x2 = (x + 1).min(uv_width - 1);
-            let mut sum_u = 0u32;
-            let mut sum_v = 0u32;
-            for yy in [y0, y, y2] {
-                let row = yy * stride;
-                for xx in [x0, x, x2] {
-                    let idx = row + xx * 2;
-                    sum_u += uv_plane[idx] as u32;
-                    sum_v += uv_plane[idx + 1] as u32;
-                }
-            }
-            let out_idx = y * stride + x * 2;
-            out[out_idx] = (sum_u / 9) as u8;
-            out[out_idx + 1] = (sum_v / 9) as u8;
-        }
-    }
-    uv_plane.copy_from_slice(&out);
-}
-
-fn tint_nv12_plane(y_plane: &mut [u8], uv_plane: &mut [u8]) {
-    for y in y_plane.iter_mut() {
-        *y = ((*y as u16 * 165) / 255) as u8;
-    }
-
-    for pair in uv_plane.chunks_exact_mut(2) {
-        let u = pair[0] as i16;
-        let v = pair[1] as i16;
-        let u_shift = (u - 128) * 80 / 100;
-        let v_shift = (v - 128) * 80 / 100;
-        let tinted_u = 128 + u_shift + 6;
-        let tinted_v = 128 + v_shift - 6;
-        pair[0] = tinted_u.clamp(0, 255) as u8;
-        pair[1] = tinted_v.clamp(0, 255) as u8;
-    }
 }

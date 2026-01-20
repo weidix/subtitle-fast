@@ -55,6 +55,7 @@ pub struct VideoRoiOverlay {
     container_bounds: Option<Bounds<Pixels>>,
     picture_bounds: Option<Bounds<Pixels>>,
     roi: RoiConfig,
+    reset_roi: RoiConfig,
     dragging: Option<DragState>,
     visible: bool,
     sender: watch::Sender<RoiConfig>,
@@ -74,6 +75,7 @@ impl VideoRoiOverlay {
                 container_bounds: None,
                 picture_bounds: None,
                 roi,
+                reset_roi: roi,
                 dragging: None,
                 visible: true,
                 sender,
@@ -87,7 +89,7 @@ impl VideoRoiOverlay {
 
     pub fn reset_roi(&mut self, cx: &mut Context<Self>) {
         self.dragging = None;
-        self.roi = default_roi();
+        self.roi = self.reset_roi;
         let _ = self.sender.send(self.roi);
         cx.notify();
     }
@@ -109,7 +111,9 @@ impl VideoRoiOverlay {
         self.container_bounds = None;
         self.picture_bounds = None;
         self.dragging = None;
-        self.roi = initial_roi.unwrap_or_else(default_roi);
+        let next_roi = initial_roi.unwrap_or_else(default_roi);
+        self.roi = next_roi;
+        self.reset_roi = next_roi;
         let _ = self.sender.send(self.roi);
         cx.notify();
     }

@@ -615,27 +615,32 @@ impl Render for VideoToolbar {
                     .child(toggle_label("Y", VideoViewMode::Y, cx)),
             );
 
+        let divider = |id: &'static str| {
+            div()
+                .id((id, cx.entity_id()))
+                .w(px(1.0))
+                .h(px(18.0))
+                .bg(container_border)
+        };
+
         let mut control_group = div()
             .flex()
             .items_center()
             .gap(px(6.0))
             .child(roi_toggle_button)
+            .child(reset_button)
+            .child(divider("video-toolbar-divider-roi"))
             .child(highlight_toggle_button)
-            .child(validator_toggle_button)
-            .child(reset_button);
+            .child(validator_toggle_button);
 
         if let Some(color_picker) = self.color_picker.clone() {
-            control_group = control_group.child(color_picker);
+            control_group = control_group
+                .child(divider("video-toolbar-divider-overlay"))
+                .child(color_picker);
         }
 
         control_group = control_group
-            .child(
-                div()
-                    .id(("video-toolbar-divider", cx.entity_id()))
-                    .w(px(1.0))
-                    .h(px(18.0))
-                    .bg(container_border),
-            )
+            .child(divider("video-toolbar-divider-view"))
             .child(toggle_container);
 
         div()

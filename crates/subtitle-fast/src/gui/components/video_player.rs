@@ -8,7 +8,8 @@ use futures_channel::mpsc::{
     unbounded as unbounded_frame_channel,
 };
 use gpui::{
-    Context, Frame, ObjectFit, Render, Task, VideoHandle, Window, div, prelude::*, rgb, video,
+    Context, Frame, ObjectFit, Render, Task, VideoHandle, Window, div, prelude::*, relative, rgb,
+    video,
 };
 use subtitle_fast_decoder::{
     Backend, Configuration, DecoderController, FrameStream, OutputFormat, SeekInfo, SeekMode,
@@ -293,6 +294,7 @@ pub struct VideoPlayer {
     receiver: Receiver<Frame>,
     frame_ready_rx: Option<FrameReadyReceiver<()>>,
     frame_ready_task: Option<Task<()>>,
+    replay_blur_visible: bool,
 }
 
 impl VideoPlayer {
@@ -312,10 +314,19 @@ impl VideoPlayer {
                 receiver,
                 frame_ready_rx: Some(frame_ready_rx),
                 frame_ready_task: None,
+                replay_blur_visible: false,
             },
             control,
             info,
         )
+    }
+
+    pub fn set_replay_blur_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.replay_blur_visible == visible {
+            return;
+        }
+        self.replay_blur_visible = visible;
+        cx.notify();
     }
 
     fn ensure_frame_listener(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -351,12 +362,39 @@ impl Render for VideoPlayer {
         if let Some(frame) = latest {
             self.handle.submit(frame);
         }
-        div().relative().size_full().bg(rgb(0x111111)).child(
-            video(self.handle.clone())
-                .object_fit(ObjectFit::Contain)
-                .w_full()
-                .h_full(),
-        )
+        let mut container = div()
+            .relative()
+            .size_full()
+            .bg(rgb(0x111111))
+            .overflow_hidden()
+            .child(
+                video(self.handle.clone())
+                    .object_fit(ObjectFit::Contain)
+                    .w_full()
+                    .h_full(),
+            );
+
+        if self.replay_blur_visible {
+            container = container.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        video(self.handle.clone())
+                            .object_fit(ObjectFit::Contain)
+                            .w(relative(1.06))
+                            .h(relative(1.06))
+                            .opacity(0.35),
+                    ),
+            );
+        }
+
+        container
     }
 }
 

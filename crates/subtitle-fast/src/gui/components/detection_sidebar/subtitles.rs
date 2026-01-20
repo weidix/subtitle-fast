@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use gpui::prelude::*;
 use gpui::{
-    Context, DispatchPhase, Div, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, Render, ScrollHandle, Task, Window, div, hsla, point, px,
+    Bounds, Context, DispatchPhase, Div, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, Render, ScrollHandle, Task, Window, div, hsla, point, px,
 };
 
 use crate::stage::TimedSubtitle;
@@ -65,6 +65,10 @@ struct ScrollbarAnimation {
 pub struct DetectedSubtitlesList {
     handle: DetectionHandle,
     subtitles: Vec<DetectedSubtitleEntry>,
+    row_heights: Vec<Pixels>,
+    row_offsets: Vec<Pixels>,
+    row_measured: Vec<bool>,
+    estimated_row_height: Pixels,
     scroll_handle: ScrollHandle,
     subtitle_task: Option<Task<()>>,
     controls: Option<VideoPlayerControlHandle>,
@@ -83,9 +87,26 @@ impl DetectedSubtitlesList {
             subtitles.push(DetectedSubtitleEntry::new(subtitle.id, subtitle));
         }
 
+        let estimated_row_height = px(DEFAULT_ESTIMATED_ROW_HEIGHT);
+        let mut row_heights = Vec::with_capacity(subtitles.len());
+        let mut row_offsets = Vec::with_capacity(subtitles.len() + 1);
+        let mut row_measured = Vec::with_capacity(subtitles.len());
+        row_offsets.push(Pixels::ZERO);
+        for _ in 0..subtitles.len() {
+            row_heights.push(estimated_row_height);
+            row_measured.push(false);
+            if let Some(last) = row_offsets.last().copied() {
+                row_offsets.push(last + estimated_row_height);
+            }
+        }
+
         Self {
             handle,
             subtitles,
+            row_heights,
+            row_offsets,
+            row_measured,
+            estimated_row_height,
             scroll_handle: ScrollHandle::new(),
             subtitle_task: None,
             controls,
@@ -126,6 +147,10 @@ impl DetectedSubtitlesList {
 
     fn reset_list(&mut self) {
         self.subtitles.clear();
+        self.row_heights.clear();
+        self.row_measured.clear();
+        self.row_offsets.clear();
+        self.row_offsets.push(Pixels::ZERO);
         self.scroll_refresh_pending = true;
         self.scrollbar_animation = None;
         self.last_scrollbar_metrics = None;
@@ -134,16 +159,20 @@ impl DetectedSubtitlesList {
     fn push_subtitle(&mut self, subtitle: TimedSubtitle) {
         let entry = DetectedSubtitleEntry::new(subtitle.id, subtitle);
         self.subtitles.push(entry);
+        self.push_row_height(self.estimated_row_height);
         self.scroll_refresh_pending = true;
     }
 
     fn update_subtitle(&mut self, subtitle: TimedSubtitle) {
-        if let Some(existing) = self
+        if let Some(index) = self
             .subtitles
-            .iter_mut()
-            .find(|entry| entry.id == subtitle.id)
+            .iter()
+            .position(|entry| entry.id == subtitle.id)
         {
-            existing.update(subtitle);
+            if let Some(existing) = self.subtitles.get_mut(index) {
+                existing.update(subtitle);
+            }
+            self.mark_row_unmeasured(index);
         } else {
             self.push_subtitle(subtitle);
         }
@@ -169,6 +198,177 @@ impl DetectedSubtitlesList {
                 cx.notify();
             });
         });
+    }
+
+    fn refresh_estimated_row_height(&mut self, window: &Window) {
+        let time_line_height = self.line_height_for_size(window, px(TIME_TEXT_SIZE));
+        let body_line_height = self.line_height_for_size(window, px(BODY_TEXT_SIZE));
+        let base = px(ROW_TOP_PADDING + ROW_BOTTOM_PADDING + ROW_ITEM_SPACING + ROW_INTERNAL_GAP);
+        let estimated = base + time_line_height + body_line_height * ESTIMATED_BODY_LINES;
+
+        if (estimated - self.estimated_row_height).abs() > px(HEIGHT_EPS) {
+            self.estimated_row_height = estimated;
+            for (index, measured) in self.row_measured.iter().enumerate() {
+                if !*measured {
+                    self.row_heights[index] = estimated;
+                }
+            }
+            self.rebuild_row_offsets();
+            self.scroll_refresh_pending = true;
+        }
+    }
+
+    fn line_height_for_size(&self, window: &Window, font_size: Pixels) -> Pixels {
+        let mut style = window.text_style();
+        style.font_size = font_size.into();
+        style.line_height_in_pixels(window.rem_size())
+    }
+
+    fn rebuild_row_offsets(&mut self) {
+        self.row_offsets.clear();
+        self.row_offsets.push(Pixels::ZERO);
+        for height in &self.row_heights {
+            if let Some(last) = self.row_offsets.last().copied() {
+                self.row_offsets.push(last + *height);
+            }
+        }
+    }
+
+    fn push_row_height(&mut self, height: Pixels) {
+        self.row_heights.push(height);
+        self.row_measured.push(false);
+        if let Some(last) = self.row_offsets.last().copied() {
+            self.row_offsets.push(last + height);
+        } else {
+            self.row_offsets.push(Pixels::ZERO);
+            self.row_offsets.push(height);
+        }
+    }
+
+    fn set_row_height(&mut self, index: usize, height: Pixels) {
+        if index >= self.row_heights.len() {
+            return;
+        }
+        let old_height = self.row_heights[index];
+        let delta = height - old_height;
+        if delta.abs() <= px(HEIGHT_EPS) {
+            return;
+        }
+        self.row_heights[index] = height;
+        for offset in self.row_offsets.iter_mut().skip(index + 1) {
+            *offset += delta;
+        }
+    }
+
+    fn mark_row_unmeasured(&mut self, index: usize) {
+        if index >= self.row_heights.len() {
+            return;
+        }
+        self.row_measured[index] = false;
+        self.set_row_height(index, self.estimated_row_height);
+    }
+
+    fn index_for_offset(&self, offset: Pixels) -> usize {
+        let mut low = 0usize;
+        let mut high = self.row_heights.len();
+        while low < high {
+            let mid = (low + high) / 2;
+            if self
+                .row_offsets
+                .get(mid + 1)
+                .copied()
+                .unwrap_or(Pixels::ZERO)
+                <= offset
+            {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        low
+    }
+
+    fn end_index_for_offset(&self, offset: Pixels) -> usize {
+        let mut low = 0usize;
+        let mut high = self.row_heights.len();
+        while low < high {
+            let mid = (low + high) / 2;
+            if self.row_offsets.get(mid).copied().unwrap_or(Pixels::ZERO) < offset {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        low
+    }
+
+    fn visible_range(&self, scroll_top: Pixels, viewport_height: Pixels) -> (usize, usize, usize) {
+        if self.row_heights.is_empty() || viewport_height <= Pixels::ZERO {
+            let end = self.row_heights.len().min(INITIAL_RENDER_COUNT);
+            return (0, 0, end);
+        }
+
+        let padding_top = px(LIST_PADDING_TOP);
+        let content_top = if scroll_top > padding_top {
+            scroll_top - padding_top
+        } else {
+            Pixels::ZERO
+        };
+        let content_bottom = content_top + viewport_height;
+        let visible_start = self.index_for_offset(content_top);
+        let overscan = px(OVERSCAN_PX);
+        let render_start = self.index_for_offset(if content_top > overscan {
+            content_top - overscan
+        } else {
+            Pixels::ZERO
+        });
+        let render_end = self.end_index_for_offset(content_bottom + overscan);
+
+        (visible_start, render_start, render_end)
+    }
+
+    fn update_row_heights(
+        &mut self,
+        render_start: usize,
+        visible_start: usize,
+        bounds: &[Bounds<Pixels>],
+    ) -> bool {
+        if self.scroll_drag.is_some() {
+            return false;
+        }
+
+        let mut changed = false;
+        let mut scroll_delta = Pixels::ZERO;
+        for (offset, bound) in bounds.iter().enumerate() {
+            let index = render_start + offset;
+            if index >= self.row_heights.len() {
+                break;
+            }
+            let new_height = bound.size.height;
+            if new_height <= Pixels::ZERO {
+                continue;
+            }
+            let old_height = self.row_heights[index];
+            let delta = new_height - old_height;
+            if delta.abs() > px(HEIGHT_EPS) {
+                if index < visible_start {
+                    scroll_delta += delta;
+                }
+                self.set_row_height(index, new_height);
+                self.row_measured[index] = true;
+                changed = true;
+            } else if !self.row_measured[index] {
+                self.row_measured[index] = true;
+            }
+        }
+
+        if scroll_delta != Pixels::ZERO {
+            let offset = self.scroll_handle.offset();
+            self.scroll_handle
+                .set_offset(point(offset.x, offset.y - scroll_delta));
+        }
+
+        changed
     }
 
     fn scrollbar_metrics(&self) -> Option<ScrollbarMetrics> {
@@ -283,7 +483,7 @@ impl DetectedSubtitlesList {
         );
 
         let mut time_row = div()
-            .text_size(px(9.0))
+            .text_size(px(TIME_TEXT_SIZE))
             .text_color(time_color)
             .child(time_text);
 
@@ -306,19 +506,19 @@ impl DetectedSubtitlesList {
             .id(("detection-subtitles-row", entry.id))
             .flex()
             .flex_col()
-            .gap(px(2.0))
+            .gap(px(ROW_INTERNAL_GAP))
             .w_full()
             .min_w(px(0.0))
-            .pt(px(2.0))
-            .pb(px(6.0))
-            .px(px(2.0))
+            .pt(px(ROW_TOP_PADDING))
+            .pb(px(ROW_BOTTOM_PADDING + ROW_ITEM_SPACING))
+            .px(px(ROW_HORIZONTAL_PADDING))
             .border_b(px(1.0))
             .border_color(divider_color)
             .child(time_row)
             .child(
                 div()
                     .min_w(px(0.0))
-                    .text_size(px(11.0))
+                    .text_size(px(BODY_TEXT_SIZE))
                     .text_color(text_color)
                     .child(entry.text.clone()),
             )
@@ -446,6 +646,7 @@ impl DetectedSubtitlesList {
 impl Render for DetectedSubtitlesList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_subtitle_listener(window, cx);
+        self.refresh_estimated_row_height(window);
         self.schedule_scroll_refresh(window, cx);
 
         let list_body = if self.subtitles.is_empty() {
@@ -453,20 +654,53 @@ impl Render for DetectedSubtitlesList {
                 .flex_1()
                 .min_h(px(0.0))
                 .child(self.empty_placeholder(cx))
+                .into_any_element()
         } else {
-            let mut rows = div()
+            let viewport_height = self.scroll_handle.bounds().size.height;
+            let scroll_top = (-self.scroll_handle.offset().y).max(Pixels::ZERO);
+            let (visible_start, render_start, render_end) =
+                self.visible_range(scroll_top, viewport_height);
+            let total_height = self.row_offsets.last().copied().unwrap_or(Pixels::ZERO);
+            let render_top = self
+                .row_offsets
+                .get(render_start)
+                .copied()
+                .unwrap_or(Pixels::ZERO);
+            let render_bottom = self
+                .row_offsets
+                .get(render_end)
+                .copied()
+                .unwrap_or(total_height);
+
+            let top_spacer_height = px(LIST_PADDING_TOP) + render_top;
+            let bottom_spacer_height = px(LIST_PADDING_BOTTOM) + (total_height - render_bottom);
+
+            let mut rows = div().flex().flex_col().w_full().min_w(px(0.0));
+            for index in render_start..render_end {
+                if let Some(entry) = self.subtitles.get(index) {
+                    rows = rows.child(self.subtitle_row(entry, cx));
+                }
+            }
+
+            let handle = cx.entity();
+            rows = rows.on_children_prepainted(move |bounds, _window, cx| {
+                handle.update(cx, |this, cx| {
+                    if this.update_row_heights(render_start, visible_start, &bounds) {
+                        this.scroll_refresh_pending = true;
+                        cx.notify();
+                    }
+                });
+            });
+
+            div()
                 .flex()
                 .flex_col()
-                .gap(px(4.0))
                 .w_full()
                 .min_w(px(0.0))
-                .px(px(2.0))
-                .py(px(4.0));
-
-            for entry in &self.subtitles {
-                rows = rows.child(self.subtitle_row(entry, cx));
-            }
-            rows
+                .child(div().w_full().h(top_spacer_height))
+                .child(rows)
+                .child(div().w_full().h(bottom_spacer_height))
+                .into_any_element()
         };
 
         let scroll_area = div()
@@ -580,6 +814,20 @@ fn ease_out(t: f32) -> f32 {
 const SCROLLBAR_ANIMATION_MS: u64 = 180;
 const SCROLLBAR_SETTLE_EPS: f32 = 1.0;
 const SCROLLBAR_CANCEL_EPS: f32 = 1.0;
+const DEFAULT_ESTIMATED_ROW_HEIGHT: f32 = 60.0;
+const ESTIMATED_BODY_LINES: f32 = 2.0;
+const LIST_PADDING_TOP: f32 = 4.0;
+const LIST_PADDING_BOTTOM: f32 = 4.0;
+const ROW_TOP_PADDING: f32 = 2.0;
+const ROW_BOTTOM_PADDING: f32 = 6.0;
+const ROW_ITEM_SPACING: f32 = 4.0;
+const ROW_HORIZONTAL_PADDING: f32 = 2.0;
+const ROW_INTERNAL_GAP: f32 = 2.0;
+const TIME_TEXT_SIZE: f32 = 9.0;
+const BODY_TEXT_SIZE: f32 = 11.0;
+const HEIGHT_EPS: f32 = 0.5;
+const OVERSCAN_PX: f32 = 160.0;
+const INITIAL_RENDER_COUNT: usize = 50;
 
 fn seek_target(start_ms: f64) -> Option<Duration> {
     if !start_ms.is_finite() {

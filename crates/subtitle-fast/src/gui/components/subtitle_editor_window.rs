@@ -9,8 +9,8 @@ use gpui::{
     WindowBounds, WindowDecorations, WindowOptions, div, hsla, px, rgb, size,
 };
 
-use crate::gui::components::config_editor::{InputKind, TextInput};
 use crate::gui::components::detection_sidebar::{SubtitleEdit, SubtitleMessage};
+use crate::gui::components::inputs::{InputKind, TextInput};
 use crate::gui::components::video_player::VideoOpenOptions;
 use crate::gui::components::{
     DetectionHandle, Titlebar, VideoPlayer, VideoPlayerControlHandle, VideoPlayerInfoHandle,

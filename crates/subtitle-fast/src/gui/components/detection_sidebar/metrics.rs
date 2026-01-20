@@ -11,7 +11,7 @@ use crate::gui::icons::{Icon, icon_sm};
 use crate::gui::runtime;
 use crate::stage::PipelineProgress;
 
-use super::DetectionHandle;
+use super::{DetectionHandle, DetectionRunState};
 
 const METRICS_THROTTLE: Duration = Duration::from_millis(500);
 const PROGRESS_STEP: f64 = 0.001;
@@ -21,22 +21,33 @@ pub struct DetectionMetrics {
     progress_task: Option<Task<()>>,
     progress_stop: Option<oneshot::Sender<()>>,
     handle: DetectionHandle,
+    run_state: DetectionRunState,
+    elapsed: Duration,
+    started_at: Option<Instant>,
 }
 
 impl DetectionMetrics {
     pub fn new(handle: DetectionHandle) -> Self {
         let progress = handle.progress_snapshot();
+        let run_state = handle.run_state();
+        let started_at = if run_state == DetectionRunState::Running {
+            Some(Instant::now())
+        } else {
+            None
+        };
         Self {
             progress,
             progress_task: None,
             progress_stop: None,
             handle,
+            run_state,
+            elapsed: Duration::ZERO,
+            started_at,
         }
     }
 
-    fn sync_progress(&mut self) {
+    fn sync_progress(&mut self, run_state: DetectionRunState) {
         let next = self.handle.progress_snapshot();
-        let run_state = self.handle.run_state();
         let effective = if run_state.is_running() || next.completed {
             next
         } else {
@@ -45,6 +56,45 @@ impl DetectionMetrics {
         if self.progress != effective {
             self.progress = effective;
         }
+    }
+
+    fn update_timing(&mut self, run_state: DetectionRunState) {
+        if self.run_state == run_state {
+            if run_state == DetectionRunState::Running && self.started_at.is_none() {
+                self.started_at = Some(Instant::now());
+            }
+            if run_state == DetectionRunState::Idle && !self.progress.completed {
+                self.elapsed = Duration::ZERO;
+                self.started_at = None;
+            }
+            return;
+        }
+
+        match (self.run_state, run_state) {
+            (DetectionRunState::Idle, DetectionRunState::Running) => {
+                self.elapsed = Duration::ZERO;
+                self.started_at = Some(Instant::now());
+            }
+            (DetectionRunState::Running, DetectionRunState::Paused) => {
+                if let Some(started_at) = self.started_at.take() {
+                    self.elapsed += Instant::now().duration_since(started_at);
+                }
+            }
+            (DetectionRunState::Paused, DetectionRunState::Running) => {
+                self.started_at = Some(Instant::now());
+            }
+            (_, DetectionRunState::Idle) => {
+                if let Some(started_at) = self.started_at.take() {
+                    self.elapsed += Instant::now().duration_since(started_at);
+                }
+                if !self.progress.completed {
+                    self.elapsed = Duration::ZERO;
+                }
+            }
+            _ => {}
+        }
+
+        self.run_state = run_state;
     }
 
     fn ensure_progress_listener(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -139,11 +189,54 @@ impl DetectionMetrics {
         ratio.clamp(0.0, 1.0) as f32
     }
 
+    fn current_elapsed(&self) -> Duration {
+        match self.started_at {
+            Some(started_at) => self.elapsed + Instant::now().duration_since(started_at),
+            None => self.elapsed,
+        }
+    }
+
     fn format_frames(&self) -> String {
         match self.progress.total_frames {
             Some(total) if total > 0 => format!("{} / {}", self.progress.samples_seen, total),
             _ => self.progress.samples_seen.to_string(),
         }
+    }
+
+    fn format_duration(duration: Duration) -> String {
+        let total_secs = duration.as_secs();
+        let hours = total_secs / 3600;
+        let minutes = (total_secs % 3600) / 60;
+        let seconds = total_secs % 60;
+        if hours > 0 {
+            format!("{hours:02}:{minutes:02}:{seconds:02}")
+        } else {
+            format!("{minutes:02}:{seconds:02}")
+        }
+    }
+
+    fn format_remaining(&self, elapsed: Duration, ratio: f32) -> String {
+        if self.progress.completed {
+            return Self::format_duration(Duration::ZERO);
+        }
+        if ratio <= f32::EPSILON {
+            return "--".to_string();
+        }
+        let elapsed_secs = elapsed.as_secs_f64();
+        if elapsed_secs <= 0.0 {
+            return "--".to_string();
+        }
+        let total_secs = elapsed_secs / ratio as f64;
+        let remaining_secs = total_secs - elapsed_secs;
+        if !remaining_secs.is_finite() || remaining_secs < 0.0 {
+            return "--".to_string();
+        }
+        Self::format_duration(Duration::from_secs_f64(remaining_secs))
+    }
+
+    fn format_percent(ratio: f32) -> String {
+        let percent = (ratio * 100.0).clamp(0.0, 100.0);
+        format!("{percent:.1}%")
     }
 
     fn format_rate(value: f64, unit: &str) -> String {
@@ -200,7 +293,9 @@ struct MetricRowConfig {
 impl Render for DetectionMetrics {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_progress_listener(window, cx);
-        self.sync_progress();
+        let run_state = self.handle.run_state();
+        self.sync_progress(run_state);
+        self.update_timing(run_state);
 
         let track_bg = rgb(0x2a2a2a);
         let fill_bg = rgb(0xd6d6d6);
@@ -208,6 +303,9 @@ impl Render for DetectionMetrics {
         let label_color = hsla(0.0, 0.0, 1.0, 0.62);
         let value_color = hsla(0.0, 0.0, 1.0, 0.9);
         let progress_ratio = self.progress_ratio();
+        let elapsed = self.current_elapsed();
+        let remaining = self.format_remaining(elapsed, progress_ratio);
+        let percent_text = Self::format_percent(progress_ratio);
 
         let progress_fill = div()
             .id(("detection-metrics-progress-fill", cx.entity_id()))
@@ -229,6 +327,31 @@ impl Render for DetectionMetrics {
             .border_1()
             .border_color(border)
             .child(progress_fill);
+
+        let progress_meta = div()
+            .id(("detection-metrics-progress-meta", cx.entity_id()))
+            .flex()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .text_size(px(10.0))
+            .text_color(label_color)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(format!("Elapsed {}", Self::format_duration(elapsed)))
+                    .child(" | ")
+                    .child(format!("ETA {}", remaining)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(value_color)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(percent_text),
+            );
 
         let rows = div()
             .flex()
@@ -329,6 +452,7 @@ impl Render for DetectionMetrics {
             .flex_col()
             .gap(px(10.0))
             .child(progress_bar)
+            .child(progress_meta)
             .child(rows)
     }
 }

@@ -368,6 +368,7 @@ impl Render for TaskSidebar {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
                                     this.apply_action(session_id, action, window, cx);
                                 }),
                             )
@@ -424,6 +425,7 @@ impl Render for TaskSidebar {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
                                 (this.callbacks.on_remove)(session_id, window, cx);
                             }),
                         )

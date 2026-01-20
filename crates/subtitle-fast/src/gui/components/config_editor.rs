@@ -1591,12 +1591,13 @@ enum ButtonStyle {
 }
 
 #[derive(Clone, Copy)]
-enum InputKind {
+pub(crate) enum InputKind {
     Integer,
     Float,
+    Text,
 }
 
-struct TextInput {
+pub(crate) struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
@@ -1613,7 +1614,7 @@ struct TextInput {
 }
 
 impl TextInput {
-    fn new(
+    pub(crate) fn new(
         cx: &mut Context<Self>,
         placeholder: impl Into<SharedString>,
         input_kind: InputKind,
@@ -1635,7 +1636,7 @@ impl TextInput {
         }
     }
 
-    fn set_invalid(&mut self, invalid: bool, cx: &mut Context<Self>) {
+    pub(crate) fn set_invalid(&mut self, invalid: bool, cx: &mut Context<Self>) {
         if self.invalid != invalid {
             self.invalid = invalid;
             cx.notify();
@@ -1663,10 +1664,14 @@ impl TextInput {
                 }
                 filtered
             }
+            InputKind::Text => new_text
+                .chars()
+                .filter(|ch| *ch != '\n' && *ch != '\r')
+                .collect(),
         }
     }
 
-    fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+    pub(crate) fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.content = text.into();
         let len = self.content.len();
         self.selected_range = len..len;
@@ -1675,7 +1680,7 @@ impl TextInput {
         cx.notify();
     }
 
-    fn text(&self) -> SharedString {
+    pub(crate) fn text(&self) -> SharedString {
         self.content.clone()
     }
 

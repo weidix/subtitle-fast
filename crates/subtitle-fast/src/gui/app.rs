@@ -16,9 +16,10 @@ use crate::gui::components::{
     ConfirmDialogButtonStyle, ConfirmDialogConfig, ConfirmDialogTitle, DetectedSubtitlesList,
     DetectionControls, DetectionHandle, DetectionMetrics, DetectionRunState, DetectionSidebar,
     DetectionSidebarHost, DragRange, DraggableEdge, HelpWindow, Sidebar, SidebarConfig,
-    SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar, TitlebarActions,
-    TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle, VideoPlayer,
-    VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay, VideoToolbar,
+    SidebarHandle, SubtitleEditorWindow, TaskSidebar, TaskSidebarCallbacks, Titlebar,
+    TitlebarActions, TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle,
+    VideoPlayer, VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay,
+    VideoToolbar,
 };
 use crate::gui::icons::{Icon, icon_md, icon_sm};
 use crate::gui::menus;
@@ -354,6 +355,7 @@ pub struct MainWindow {
     menu_refresh_listeners: HashMap<SessionId, MenuRefreshListener>,
     config_window: Option<WindowHandle<ConfigWindow>>,
     help_window: Option<WindowHandle<HelpWindow>>,
+    subtitle_editor_window: Option<WindowHandle<SubtitleEditorWindow>>,
 }
 
 struct MainWindowParts {
@@ -403,6 +405,7 @@ impl MainWindow {
             menu_refresh_listeners: HashMap::new(),
             config_window: None,
             help_window: None,
+            subtitle_editor_window: None,
         }
     }
 
@@ -438,6 +441,51 @@ impl MainWindow {
                 window.activate_window();
             });
             self.help_window = Some(handle);
+        }
+    }
+
+    /// Opens the subtitle editor window or focuses it if already open.
+    pub(crate) fn open_subtitle_editor_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(handle) = self.subtitle_editor_window
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+
+        let Some(session_id) = self.active_session else {
+            let task = window.spawn(cx, |cx: &mut gpui::AsyncWindowContext| {
+                let mut cx = cx.clone();
+                async move {
+                    let buttons = [PromptButton::ok("OK")];
+                    let _ = cx
+                        .prompt(
+                            PromptLevel::Warning,
+                            "No active task",
+                            Some("Select or add a task before editing subtitles."),
+                            &buttons,
+                        )
+                        .await;
+                }
+            });
+            drop(task);
+            return;
+        };
+
+        let Some(session) = self.sessions.session(session_id) else {
+            return;
+        };
+
+        if let Some(handle) = SubtitleEditorWindow::open(session, cx) {
+            let _ = handle.update(cx, |_, window, _| {
+                window.activate_window();
+            });
+            self.subtitle_editor_window = Some(handle);
         }
     }
 

@@ -7,6 +7,7 @@ pub mod help_window;
 pub mod menu_bar;
 pub mod menu_bar_buttons;
 pub mod sidebar;
+pub mod subtitle_editor_window;
 pub mod task_sidebar;
 pub mod titlebar;
 pub mod titlebar_actions;
@@ -32,6 +33,7 @@ pub use menu_bar::MenuBar;
 pub use sidebar::{
     CollapseDirection, DragRange, DraggableEdge, Sidebar, SidebarConfig, SidebarHandle,
 };
+pub use subtitle_editor_window::SubtitleEditorWindow;
 pub use task_sidebar::{TaskSidebar, TaskSidebarCallbacks};
 pub use titlebar::Titlebar;
 pub use titlebar_actions::{TitlebarActions, TitlebarActionsCallbacks};

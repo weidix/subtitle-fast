@@ -9,7 +9,15 @@ use crate::gui::session::{SessionId, VideoSession};
 
 actions!(
     subtitle_fast_menu,
-    [Quit, OpenSettings, AddTask, RemoveTask, ToggleTask, Help]
+    [
+        Quit,
+        OpenSettings,
+        AddTask,
+        RemoveTask,
+        ToggleTask,
+        OpenSubtitleEditor,
+        Help
+    ]
 );
 
 #[derive(Clone, PartialEq, gpui::Action)]
@@ -77,6 +85,12 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(|_: &AddTask, cx| {
         defer_main_window_action(cx, |this, window, cx| {
             this.prompt_for_video(window, true, cx);
+        });
+    });
+
+    cx.on_action(|_: &OpenSubtitleEditor, cx| {
+        defer_main_window_action(cx, |this, window, cx| {
+            this.open_subtitle_editor_window(window, cx);
         });
     });
 
@@ -217,6 +231,7 @@ fn build_menus(
             icon: None,
             items: vec![
                 MenuItem::action("Add Task", AddTask).with_icon("plus"),
+                MenuItem::action("Subtitle Editor", OpenSubtitleEditor).with_icon("pencil"),
                 toggle_task_menu,
                 remove_task_menu,
             ],

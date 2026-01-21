@@ -45,8 +45,12 @@ const SCROLLBAR_CANCEL_EPS: f32 = 1.0;
 const SCROLLBAR_FADE_DELAY_MS: u64 = 1000;
 const SCROLLBAR_FADE_MS: u64 = 200;
 const LINE_PLACEHOLDER: &str = "Subtitle line";
-const TIME_INPUT_TRAILING_WIDTH: f32 = 72.0;
-const TIME_INPUT_TRAILING_GAP: f32 = 8.0;
+const TRAILING_ICON_BUTTON_WIDTH: f32 = 34.0;
+const TRAILING_ICON_BUTTON_HEIGHT: f32 = 28.0;
+const TIME_INPUT_TRAILING_WIDTH: f32 = TRAILING_ICON_BUTTON_WIDTH;
+const TIME_INPUT_TRAILING_GAP: f32 = 3.0;
+const TRAILING_ICON_BUTTON_GAP: f32 = 4.0;
+const LINE_INPUT_TRAILING_WIDTH: f32 = TRAILING_ICON_BUTTON_WIDTH * 2.0 + TRAILING_ICON_BUTTON_GAP;
 const TIME_COMPARE_EPS: f64 = 1e-6;
 
 #[derive(Clone, Debug)]
@@ -1977,36 +1981,31 @@ impl SubtitleEditorWindow {
                 line_rows
             })
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(TIME_INPUT_TRAILING_GAP))
-                    .child(
-                        div().flex_1().min_w(px(0.0)).child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.0))
-                                .h(px(30.0))
-                                .w_full()
-                                .px(px(10.0))
-                                .rounded(px(6.0))
-                                .bg(add_bg)
-                                .text_size(px(11.0))
-                                .text_color(add_text)
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(add_hover))
-                                .child(icon_sm(Icon::Plus, add_text))
-                                .child("Add line")
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _event, _window, cx| {
-                                        this.add_line_input(cx);
-                                    }),
-                                ),
-                        ),
-                    )
-                    .child(div().w(px(TIME_INPUT_TRAILING_WIDTH)).h(px(30.0))),
+                div().flex().items_center().child(
+                    div().flex_1().min_w(px(0.0)).child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .h(px(30.0))
+                            .w_full()
+                            .px(px(10.0))
+                            .rounded(px(6.0))
+                            .bg(add_bg)
+                            .text_size(px(11.0))
+                            .text_color(add_text)
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(add_hover))
+                            .child(icon_sm(Icon::Plus, add_text))
+                            .child("Add line")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _event, _window, cx| {
+                                    this.add_line_input(cx);
+                                }),
+                            ),
+                    ),
+                ),
             )
             .child(
                 div()
@@ -2033,6 +2032,13 @@ impl SubtitleEditorWindow {
         let modified_accent = hsla(0.08, 0.85, 0.6, 1.0);
         let modified_bg = hsla(0.08, 0.85, 0.55, 0.12);
         let modified_hover = hsla(0.08, 0.85, 0.35, 0.18);
+        let disabled_bg = hsla(0.0, 0.0, 1.0, 0.05);
+        let disabled_icon = hsla(0.0, 0.0, 1.0, 0.35);
+        let button_bg = hsla(0.0, 0.0, 1.0, 0.06);
+        let button_border = rgb(0x2f2f2f);
+        let button_hover_border = rgb(0x3a3a3a);
+        let modified_border = button_border;
+        let modified_hover_border = button_hover_border;
 
         let mut input_wrapper = div().flex_1().min_w(px(0.0)).relative().child(input);
         if is_modified {
@@ -2048,27 +2054,40 @@ impl SubtitleEditorWindow {
             );
         }
 
-        let rollback_button = if is_modified {
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .h(px(28.0))
-                .w(px(TIME_INPUT_TRAILING_WIDTH))
-                .rounded(px(6.0))
+        let mut rollback_button = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(TRAILING_ICON_BUTTON_HEIGHT))
+            .w(px(TIME_INPUT_TRAILING_WIDTH))
+            .rounded(px(6.0))
+            .bg(button_bg)
+            .border_1()
+            .border_color(button_border)
+            .child(icon_sm(
+                Icon::RotateCcw,
+                if is_modified {
+                    modified_accent
+                } else {
+                    disabled_icon
+                },
+            ));
+
+        if is_modified {
+            rollback_button = rollback_button
                 .cursor_pointer()
                 .bg(modified_bg)
-                .hover(move |style| style.bg(modified_hover))
-                .child(icon_sm(Icon::RotateCcw, modified_accent))
+                .border_color(modified_border)
+                .hover(move |style| style.bg(modified_hover).border_color(modified_hover_border))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _event, _window, cx| {
                         this.rollback_time_field(field, cx);
                     }),
-                )
+                );
         } else {
-            div().w(px(TIME_INPUT_TRAILING_WIDTH)).h(px(28.0))
-        };
+            rollback_button = rollback_button.bg(disabled_bg);
+        }
 
         div()
             .flex()
@@ -2132,12 +2151,17 @@ impl SubtitleEditorWindow {
         let disabled_icon = hsla(0.0, 0.0, 1.0, 0.35);
         let new_accent = hsla(0.55, 0.55, 0.65, 1.0);
         let new_bg = hsla(0.55, 0.55, 0.45, 0.12);
+        let button_bg = hsla(0.0, 0.0, 1.0, 0.06);
+        let button_border = rgb(0x2f2f2f);
+        let button_hover_border = rgb(0x3a3a3a);
+        let modified_border = button_border;
+        let modified_hover_border = button_hover_border;
         let delete_color = if delete_enabled && !input_state.deleted {
-            hsla(0.0, 0.0, 1.0, 0.75)
+            deleted_badge_text
         } else {
             hsla(0.0, 0.0, 1.0, 0.35)
         };
-        let delete_hover = hsla(0.0, 0.0, 1.0, 0.12);
+        let delete_hover = deleted_badge_bg;
         let is_new_line = self.line_is_new(index);
         let is_modified = self.line_is_modified(index, &input_state, cx);
         let toggle_icon = Icon::Trash;
@@ -2147,9 +2171,16 @@ impl SubtitleEditorWindow {
             .flex()
             .items_center()
             .justify_center()
-            .w(px(28.0))
-            .h(px(28.0))
+            .w(px(TRAILING_ICON_BUTTON_WIDTH))
+            .h(px(TRAILING_ICON_BUTTON_HEIGHT))
             .rounded(px(6.0))
+            .bg(button_bg)
+            .border_1()
+            .border_color(if rollback_enabled {
+                modified_border
+            } else {
+                button_border
+            })
             .child(icon_sm(
                 Icon::RotateCcw,
                 if rollback_enabled {
@@ -2162,7 +2193,8 @@ impl SubtitleEditorWindow {
         if rollback_enabled {
             rollback_button = rollback_button
                 .cursor_pointer()
-                .hover(move |style| style.bg(modified_hover))
+                .bg(modified_bg)
+                .hover(move |style| style.bg(modified_hover).border_color(modified_hover_border))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _event, _window, cx| {
@@ -2175,15 +2207,18 @@ impl SubtitleEditorWindow {
             .flex()
             .items_center()
             .justify_center()
-            .w(px(28.0))
-            .h(px(28.0))
+            .w(px(TRAILING_ICON_BUTTON_WIDTH))
+            .h(px(TRAILING_ICON_BUTTON_HEIGHT))
             .rounded(px(6.0))
+            .bg(button_bg)
+            .border_1()
+            .border_color(button_border)
             .child(icon_sm(toggle_icon, delete_color));
 
         if delete_enabled && !input_state.deleted {
             delete_button = delete_button
                 .cursor_pointer()
-                .hover(move |style| style.bg(delete_hover))
+                .hover(move |style| style.bg(delete_hover).border_color(button_hover_border))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _event, _window, cx| {
@@ -2199,35 +2234,34 @@ impl SubtitleEditorWindow {
             } else {
                 raw_text.to_string()
             };
-            div().flex_1().min_w(px(0.0)).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .h(px(30.0))
-                    .px(px(8.0))
-                    .rounded(px(6.0))
-                    .bg(deleted_bg)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .text_size(px(12.0))
-                            .text_color(deleted_text)
-                            .text_ellipsis()
-                            .child(text),
-                    )
-                    .child(
-                        div()
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(px(4.0))
-                            .text_size(px(9.0))
-                            .text_color(deleted_badge_text)
-                            .bg(deleted_badge_bg)
-                            .child("Deleted"),
-                    ),
-            )
+            let row = div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .h(px(30.0))
+                .px(px(8.0))
+                .rounded(px(6.0))
+                .bg(deleted_bg)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .text_size(px(12.0))
+                        .text_color(deleted_text)
+                        .text_ellipsis()
+                        .child(text),
+                )
+                .child(
+                    div()
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .text_size(px(9.0))
+                        .text_color(deleted_badge_text)
+                        .bg(deleted_badge_bg)
+                        .child("Deleted"),
+                );
+            div().flex_1().min_w(px(0.0)).child(row)
         } else {
             let mut wrapper = div().flex_1().min_w(px(0.0)).relative().child(input);
             if is_new_line {
@@ -2260,8 +2294,8 @@ impl SubtitleEditorWindow {
             .flex()
             .items_center()
             .justify_end()
-            .gap(px(4.0))
-            .w(px(TIME_INPUT_TRAILING_WIDTH))
+            .gap(px(TRAILING_ICON_BUTTON_GAP))
+            .w(px(LINE_INPUT_TRAILING_WIDTH))
             .child(delete_button)
             .child(rollback_button);
 

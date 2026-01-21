@@ -6,7 +6,7 @@ on:
     workflows:
       - Rust CI
     branches:
-      - master
+      - main
     types:
       - completed
   workflow_dispatch:

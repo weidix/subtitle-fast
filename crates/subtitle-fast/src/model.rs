@@ -17,9 +17,11 @@ use crate::settings;
 const ORT_MODEL_FILENAME: &str = "ch_PP-OCRv5_rec_infer.onnx";
 const ORT_DICT_FILENAME: &str = "ch_PP-OCRv5_rec_infer.txt";
 #[cfg(feature = "ocr-ort")]
-const ORT_MODEL_URL: &str = "https://raw.githubusercontent.com/weidix/subtitle-fast/master/models/ch_PP-OCRv5_rec_infer.onnx";
+const ORT_MODEL_URL: &str =
+    "https://raw.githubusercontent.com/weidix/subtitle-fast/main/models/ch_PP-OCRv5_rec_infer.onnx";
 #[cfg(feature = "ocr-ort")]
-const ORT_DICT_URL: &str = "https://raw.githubusercontent.com/weidix/subtitle-fast/master/models/ch_PP-OCRv5_rec_infer.txt";
+const ORT_DICT_URL: &str =
+    "https://raw.githubusercontent.com/weidix/subtitle-fast/main/models/ch_PP-OCRv5_rec_infer.txt";
 
 static ORT_MODEL_PATHS: OnceLock<OrtModelPaths> = OnceLock::new();
 

@@ -63,9 +63,9 @@ fn run_gui() -> Result<(), DecoderError> {
             None,
         )]);
         if cfg!(target_os = "macos") {
-            menus::set_macos_menus(cx, &[]);
+            menus::set_macos_menus(cx, &[], false);
         } else {
-            menus::set_app_menus(cx, &[]);
+            menus::set_app_menus(cx, &[], false);
         }
         let settings = subtitle_fast::settings::resolve_gui_settings().ok();
         let model_paths = match model::init_ort_model_paths(None) {

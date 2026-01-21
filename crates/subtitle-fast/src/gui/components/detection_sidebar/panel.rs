@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{Context, Entity, FontWeight, Render, Window, div, hsla, px, rgb};
+use gpui::{Action, Context, Entity, FontWeight, Render, Window, div, hsla, px, rgb};
 
 use crate::gui::icons::{Icon, icon_sm};
 use crate::gui::menus::OpenSubtitleEditor;
@@ -99,7 +99,7 @@ impl DetectionSidebar {
                 .cursor_pointer()
                 .hover(move |s| s.bg(edit_hover))
                 .on_click(cx.listener(|_, _event, window, cx| {
-                    window.dispatch_action(Box::new(OpenSubtitleEditor), cx);
+                    window.dispatch_action(OpenSubtitleEditor.boxed_clone(), cx);
                 }));
         }
 

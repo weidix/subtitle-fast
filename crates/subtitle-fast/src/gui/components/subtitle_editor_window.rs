@@ -1749,37 +1749,23 @@ impl SubtitleEditorWindow {
         let deleted_text = hsla(0.0, 0.0, 1.0, 0.65);
         let deleted_badge_bg = hsla(0.0, 0.7, 0.45, 0.25);
         let deleted_badge_text = hsla(0.0, 0.7, 0.7, 1.0);
-        let restore_color = hsla(0.12, 0.7, 0.65, 1.0);
-        let restore_hover = hsla(0.12, 0.7, 0.35, 0.18);
         let modified_accent = hsla(0.08, 0.85, 0.6, 1.0);
         let modified_bg = hsla(0.08, 0.85, 0.55, 0.12);
         let modified_hover = hsla(0.08, 0.85, 0.35, 0.18);
         let disabled_icon = hsla(0.0, 0.0, 1.0, 0.35);
         let new_accent = hsla(0.55, 0.55, 0.65, 1.0);
         let new_bg = hsla(0.55, 0.55, 0.45, 0.12);
-        let delete_color = if delete_enabled {
-            if input_state.deleted {
-                restore_color
-            } else {
-                hsla(0.0, 0.0, 1.0, 0.75)
-            }
+        let delete_color = if delete_enabled && !input_state.deleted {
+            hsla(0.0, 0.0, 1.0, 0.75)
         } else {
             hsla(0.0, 0.0, 1.0, 0.35)
         };
-        let delete_hover = if input_state.deleted {
-            restore_hover
-        } else {
-            hsla(0.0, 0.0, 1.0, 0.12)
-        };
+        let delete_hover = hsla(0.0, 0.0, 1.0, 0.12);
         let is_new_line = self.line_is_new(index);
         let is_modified = self.line_is_modified(index, &input_state, cx);
-        let toggle_icon = if input_state.deleted {
-            Icon::RotateCcw
-        } else {
-            Icon::Trash
-        };
+        let toggle_icon = Icon::Trash;
         let input = input_state.input.clone();
-        let rollback_enabled = is_modified && !input_state.deleted;
+        let rollback_enabled = is_modified;
         let mut rollback_button = div()
             .flex()
             .items_center()
@@ -1817,7 +1803,7 @@ impl SubtitleEditorWindow {
             .rounded(px(6.0))
             .child(icon_sm(toggle_icon, delete_color));
 
-        if delete_enabled {
+        if delete_enabled && !input_state.deleted {
             delete_button = delete_button
                 .cursor_pointer()
                 .hover(move |style| style.bg(delete_hover))

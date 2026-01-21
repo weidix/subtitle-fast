@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use gpui::prelude::*;
@@ -41,6 +41,8 @@ const DEFAULT_ESTIMATED_ROW_HEIGHT: f32 = 60.0;
 const SCROLLBAR_ANIMATION_MS: u64 = 180;
 const SCROLLBAR_SETTLE_EPS: f32 = 1.0;
 const SCROLLBAR_CANCEL_EPS: f32 = 1.0;
+const SCROLLBAR_FADE_DELAY_MS: u64 = 1000;
+const SCROLLBAR_FADE_MS: u64 = 200;
 const LINE_PLACEHOLDER: &str = "Subtitle line";
 const TIME_INPUT_TRAILING_WIDTH: f32 = 72.0;
 const TIME_INPUT_TRAILING_GAP: f32 = 8.0;
@@ -120,7 +122,7 @@ struct ScrollbarDragState {
 struct ScrollbarAnimation {
     start: ScrollbarMetrics,
     target: ScrollbarMetrics,
-    started_at: std::time::Instant,
+    started_at: Instant,
 }
 
 pub struct SubtitleEditorWindow {
@@ -154,6 +156,8 @@ pub struct SubtitleEditorWindow {
     list_scroll_settle_pending: bool,
     list_scrollbar_animation: Option<ScrollbarAnimation>,
     list_last_scrollbar_metrics: Option<ScrollbarMetrics>,
+    list_scrollbar_hovered: bool,
+    list_scrollbar_last_interaction: Option<Instant>,
 }
 
 impl SubtitleEditorWindow {
@@ -253,6 +257,8 @@ impl SubtitleEditorWindow {
             list_scroll_settle_pending: false,
             list_scrollbar_animation: None,
             list_last_scrollbar_metrics: None,
+            list_scrollbar_hovered: false,
+            list_scrollbar_last_interaction: None,
         };
 
         window.register_input_observers(cx);
@@ -1215,6 +1221,7 @@ impl SubtitleEditorWindow {
         let local_y = f32::from(position.y - bounds.origin.y);
         self.list_scroll_settle_pending = false;
         self.list_scrollbar_animation = None;
+        self.mark_list_scrollbar_interaction();
         self.list_scroll_drag = Some(ScrollbarDragState {
             start_pointer_y: local_y,
             start_scroll_top: metrics.scroll_top,
@@ -1244,14 +1251,53 @@ impl SubtitleEditorWindow {
 
     fn end_scroll_drag(&mut self, cx: &mut Context<Self>) {
         if self.list_scroll_drag.take().is_some() {
+            self.mark_list_scrollbar_interaction();
             self.list_scroll_settle_pending = true;
             cx.notify();
         }
     }
 
-    fn scrollbar_overlay(&self, metrics: ScrollbarMetrics, cx: &mut Context<Self>) -> Option<Div> {
-        let thumb_color = hsla(0.0, 0.0, 1.0, 0.55);
-        let thumb_hover = hsla(0.0, 0.0, 1.0, 0.72);
+    fn mark_list_scrollbar_interaction(&mut self) {
+        self.list_scrollbar_last_interaction = Some(Instant::now());
+    }
+
+    fn list_scrollbar_opacity(&self, now: Instant) -> f32 {
+        if self.list_scroll_drag.is_some() || self.list_scrollbar_hovered {
+            return 1.0;
+        }
+        let Some(last) = self.list_scrollbar_last_interaction else {
+            return 0.0;
+        };
+        let delay = Duration::from_millis(SCROLLBAR_FADE_DELAY_MS);
+        let fade = Duration::from_millis(SCROLLBAR_FADE_MS);
+        let elapsed = now.saturating_duration_since(last);
+        if elapsed <= delay {
+            return 1.0;
+        }
+        if fade.as_secs_f32() <= f32::EPSILON {
+            return 0.0;
+        }
+        let t = ((elapsed - delay).as_secs_f32() / fade.as_secs_f32()).min(1.0);
+        1.0 - ease_out(t)
+    }
+
+    fn scrollbar_overlay(
+        &self,
+        metrics: ScrollbarMetrics,
+        opacity: f32,
+        is_dragging: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        if opacity <= f32::EPSILON {
+            return None;
+        }
+        let thumb_color = hsla(0.0, 0.0, 1.0, 0.28 * opacity);
+        let thumb_hover = hsla(0.0, 0.0, 1.0, 0.55 * opacity);
+        let base_color = if is_dragging {
+            thumb_hover
+        } else {
+            thumb_color
+        };
 
         let track = div()
             .absolute()
@@ -1269,7 +1315,7 @@ impl SubtitleEditorWindow {
             .right(px(2.0))
             .h(px(metrics.thumb_height))
             .rounded(px(4.0))
-            .bg(thumb_color)
+            .bg(base_color)
             .cursor_default()
             .hover(move |style| style.bg(thumb_hover))
             .on_mouse_down(
@@ -1447,6 +1493,12 @@ impl SubtitleEditorWindow {
             .track_scroll(&self.list_scroll_handle)
             .on_scroll_wheel(cx.listener(|this, _event, _window, cx| {
                 this.list_scroll_refresh_pending = true;
+                this.mark_list_scrollbar_interaction();
+                cx.notify();
+            }))
+            .on_hover(cx.listener(|this, hovered, _window, cx| {
+                this.list_scrollbar_hovered = *hovered;
+                this.mark_list_scrollbar_interaction();
                 cx.notify();
             }))
             .child(list_body);
@@ -1466,13 +1518,18 @@ impl SubtitleEditorWindow {
             self.list_scrollbar_metrics()
         };
 
+        let now = Instant::now();
+        let opacity = self.list_scrollbar_opacity(now);
+
         if let Some(target) = metrics {
             let metrics = if self.list_scroll_drag.is_some() {
                 target
             } else {
                 self.animated_scrollbar_metrics(target, window)
             };
-            if let Some(scrollbar) = self.scrollbar_overlay(metrics, cx) {
+            if let Some(scrollbar) =
+                self.scrollbar_overlay(metrics, opacity, self.list_scroll_drag.is_some(), cx)
+            {
                 container = container.child(scrollbar);
             }
             self.list_last_scrollbar_metrics = Some(metrics);
@@ -1480,6 +1537,18 @@ impl SubtitleEditorWindow {
             self.list_scrollbar_animation = None;
             self.list_scroll_settle_pending = false;
             self.list_last_scrollbar_metrics = None;
+            self.list_scrollbar_last_interaction = None;
+        }
+
+        if self.list_scrollbar_last_interaction.is_some()
+            && !self.list_scrollbar_hovered
+            && self.list_scroll_drag.is_none()
+        {
+            if opacity > f32::EPSILON {
+                window.request_animation_frame();
+            } else {
+                self.list_scrollbar_last_interaction = None;
+            }
         }
 
         if self.list_scroll_drag.is_some() {

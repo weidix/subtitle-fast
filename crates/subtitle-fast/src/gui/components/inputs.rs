@@ -27,6 +27,8 @@ actions!(
         Tab,
         TabPrev,
         Enter,
+        Undo,
+        Redo,
         ShowCharacterPalette,
         Paste,
         Cut,
@@ -36,6 +38,15 @@ actions!(
 
 const INPUT_HEIGHT: f32 = 30.0;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+const MAX_UNDO_ENTRIES: usize = 100;
+
+#[derive(Clone, PartialEq)]
+struct InputSnapshot {
+    content: SharedString,
+    selected_range: Range<usize>,
+    selection_reversed: bool,
+    marked_range: Option<Range<usize>>,
+}
 
 #[derive(Clone)]
 pub(crate) struct SelectOption {
@@ -200,6 +211,10 @@ pub(crate) struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    scroll_x: Pixels,
+    undo_stack: Vec<InputSnapshot>,
+    redo_stack: Vec<InputSnapshot>,
+    composition_snapshot: Option<InputSnapshot>,
 }
 
 impl TextInput {
@@ -223,6 +238,10 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            scroll_x: px(0.0),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            composition_snapshot: None,
         }
     }
 
@@ -273,6 +292,10 @@ impl TextInput {
         self.selected_range = len..len;
         self.selection_reversed = false;
         self.marked_range = None;
+        self.scroll_x = px(0.0);
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.composition_snapshot = None;
         cx.notify();
     }
 
@@ -331,6 +354,28 @@ impl TextInput {
 
     fn enter(&mut self, _: &Enter, window: &mut Window, _: &mut Context<Self>) {
         window.blur();
+    }
+
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(snapshot) = self.undo_stack.pop() {
+            let mut current = self.snapshot();
+            current.marked_range = None;
+            self.redo_stack.push(current);
+            self.apply_snapshot(snapshot);
+            self.composition_snapshot = None;
+            cx.notify();
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(snapshot) = self.redo_stack.pop() {
+            let mut current = self.snapshot();
+            current.marked_range = None;
+            self.undo_stack.push(current);
+            self.apply_snapshot(snapshot);
+            self.composition_snapshot = None;
+            cx.notify();
+        }
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -432,7 +477,7 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        line.closest_index_for_x(position.x - bounds.left() - self.scroll_x)
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -484,6 +529,60 @@ impl TextInput {
 
     fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
+    }
+
+    fn offset_from_utf16_in_text(text: &str, offset: usize) -> usize {
+        let mut utf8_offset = 0;
+        let mut utf16_count = 0;
+
+        for ch in text.chars() {
+            if utf16_count >= offset {
+                break;
+            }
+            utf16_count += ch.len_utf16();
+            utf8_offset += ch.len_utf8();
+        }
+
+        utf8_offset
+    }
+
+    fn range_from_utf16_in_text(text: &str, range_utf16: &Range<usize>) -> Range<usize> {
+        Self::offset_from_utf16_in_text(text, range_utf16.start)
+            ..Self::offset_from_utf16_in_text(text, range_utf16.end)
+    }
+
+    fn snapshot(&self) -> InputSnapshot {
+        InputSnapshot {
+            content: self.content.clone(),
+            selected_range: self.selected_range.clone(),
+            selection_reversed: self.selection_reversed,
+            marked_range: self.marked_range.clone(),
+        }
+    }
+
+    fn snapshot_without_marked(&self) -> InputSnapshot {
+        let mut snapshot = self.snapshot();
+        snapshot.marked_range = None;
+        snapshot
+    }
+
+    fn apply_snapshot(&mut self, snapshot: InputSnapshot) {
+        self.content = snapshot.content;
+        self.selected_range = snapshot.selected_range;
+        self.selection_reversed = snapshot.selection_reversed;
+        self.marked_range = snapshot.marked_range;
+    }
+
+    fn push_undo_snapshot(&mut self, snapshot: InputSnapshot) {
+        if self.undo_stack.len() >= MAX_UNDO_ENTRIES {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push(snapshot);
+        self.redo_stack.clear();
+    }
+
+    fn record_undo_snapshot(&mut self) {
+        self.push_undo_snapshot(self.snapshot_without_marked());
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {
@@ -539,6 +638,7 @@ impl EntityInputHandler for TextInput {
 
     fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
         self.marked_range = None;
+        self.composition_snapshot = None;
     }
 
     fn replace_text_in_range(
@@ -555,10 +655,24 @@ impl EntityInputHandler for TextInput {
             .unwrap_or(self.selected_range.clone());
         let new_text = self.filter_input(&range, new_text);
 
-        self.content =
+        let new_content =
             (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
                 .into();
-        self.selected_range = range.start + new_text.len()..range.start + new_text.len();
+        let new_selected_range = range.start + new_text.len()..range.start + new_text.len();
+
+        if new_content == self.content && new_selected_range == self.selected_range {
+            return;
+        }
+
+        if self.marked_range.is_some() && self.composition_snapshot.is_some() {
+            if let Some(snapshot) = self.composition_snapshot.take() {
+                self.push_undo_snapshot(snapshot);
+            }
+        } else {
+            self.record_undo_snapshot();
+        }
+        self.content = new_content;
+        self.selected_range = new_selected_range;
         self.marked_range.take();
         cx.notify();
     }
@@ -578,14 +692,37 @@ impl EntityInputHandler for TextInput {
             .unwrap_or(self.selected_range.clone());
         let new_text = self.filter_input(&range, new_text);
 
-        self.content =
+        if self.marked_range.is_none()
+            && !new_text.is_empty()
+            && self.composition_snapshot.is_none()
+        {
+            self.composition_snapshot = Some(self.snapshot_without_marked());
+        }
+
+        let new_content =
             (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
                 .into();
-        self.selected_range = new_selected_range
+        let new_marked_range = if new_text.is_empty() {
+            None
+        } else {
+            Some(range.start..range.start + new_text.len())
+        };
+        let new_selected_range = new_selected_range
             .as_ref()
-            .map(|range| self.range_from_utf16(range))
+            .map(|range_utf16| Self::range_from_utf16_in_text(&new_text, range_utf16))
+            .map(|range_utf8| range.start + range_utf8.start..range.start + range_utf8.end)
             .unwrap_or(range.start + new_text.len()..range.start + new_text.len());
-        self.marked_range = new_selected_range.map(|range| self.range_from_utf16(&range));
+
+        if new_content == self.content
+            && new_selected_range == self.selected_range
+            && new_marked_range == self.marked_range
+        {
+            return;
+        }
+
+        self.content = new_content;
+        self.marked_range = new_marked_range;
+        self.selected_range = new_selected_range;
         cx.notify();
     }
 
@@ -600,11 +737,11 @@ impl EntityInputHandler for TextInput {
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
-                bounds.left() + last_layout.x_for_index(range.start),
+                bounds.left() + self.scroll_x + last_layout.x_for_index(range.start),
                 bounds.top(),
             ),
             point(
-                bounds.left() + last_layout.x_for_index(range.end),
+                bounds.left() + self.scroll_x + last_layout.x_for_index(range.end),
                 bounds.bottom(),
             ),
         ))
@@ -619,7 +756,7 @@ impl EntityInputHandler for TextInput {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
 
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        let utf8_index = last_layout.index_for_x(line_point.x - self.scroll_x)?;
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -632,11 +769,53 @@ struct PrepaintState {
     line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
+    scroll_x: Pixels,
 }
 
 fn snap_to_device(value: Pixels, scale: f32) -> Pixels {
     let snapped = value.scale(scale).round();
     px((f64::from(snapped) as f32) / scale)
+}
+
+fn clamp_pixels(value: Pixels, min: Pixels, max: Pixels) -> Pixels {
+    if value < min {
+        min
+    } else if value > max {
+        max
+    } else {
+        value
+    }
+}
+
+fn scroll_x_for_cursor(
+    line_width: Pixels,
+    bounds_width: Pixels,
+    cursor_x: Pixels,
+    cursor_width: Pixels,
+) -> Pixels {
+    if line_width <= bounds_width {
+        return px(0.0);
+    }
+    let padding = px(8.0);
+    let padding = if bounds_width <= padding * 2.0 {
+        px(0.0)
+    } else {
+        padding
+    };
+    let right_padding = padding + cursor_width;
+    let min_scroll = bounds_width - line_width - right_padding;
+    let max_scroll = px(0.0);
+    let mut scroll_x = max_scroll;
+    let left_limit = padding;
+    let right_limit = bounds_width - padding - cursor_width;
+
+    if cursor_x + scroll_x < left_limit {
+        scroll_x = left_limit - cursor_x;
+    } else if cursor_x + scroll_x > right_limit {
+        scroll_x = right_limit - cursor_x;
+    }
+
+    clamp_pixels(scroll_x, min_scroll, max_scroll)
 }
 
 impl IntoElement for TextElement {
@@ -741,6 +920,9 @@ impl Element for TextElement {
             .shape_line(display_text, font_size, &runs, None);
 
         let cursor_pos = line.x_for_index(cursor);
+        let cursor_width = px(1.0 / window.scale_factor());
+        let scroll_x = scroll_x_for_cursor(line.width, bounds.size.width, cursor_pos, cursor_width);
+        let text_origin_x = bounds.left() + scroll_x;
         let (selection, cursor) = if selected_range.is_empty() && blink_on {
             let bounds_height: f32 = bounds.size.height.into();
             let font_height: f32 = font_size.into();
@@ -750,7 +932,7 @@ impl Element for TextElement {
                 bounds.top() + px((bounds_height - cursor_height) * 0.5),
                 scale,
             );
-            let cursor_x = snap_to_device(bounds.left() + cursor_pos, scale);
+            let cursor_x = snap_to_device(text_origin_x + cursor_pos, scale);
             let cursor_width = px(1.0 / scale);
             (
                 None,
@@ -767,11 +949,11 @@ impl Element for TextElement {
                 Some(fill(
                     Bounds::from_corners(
                         point(
-                            bounds.left() + line.x_for_index(selected_range.start),
+                            text_origin_x + line.x_for_index(selected_range.start),
                             bounds.top(),
                         ),
                         point(
-                            bounds.left() + line.x_for_index(selected_range.end),
+                            text_origin_x + line.x_for_index(selected_range.end),
                             bounds.bottom(),
                         ),
                     ),
@@ -784,6 +966,7 @@ impl Element for TextElement {
             line: Some(line),
             cursor,
             selection,
+            scroll_x,
         }
     }
 
@@ -807,8 +990,14 @@ impl Element for TextElement {
             window.paint_quad(selection)
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
+        let scroll_x = prepaint.scroll_x;
+        line.paint(
+            point(bounds.left() + scroll_x, bounds.top()),
+            window.line_height(),
+            window,
+            cx,
+        )
+        .unwrap();
 
         let is_focused = focus_handle.is_focused(window);
         if is_focused && let Some(cursor) = prepaint.cursor.take() {
@@ -821,6 +1010,13 @@ impl Element for TextElement {
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
+            input.scroll_x = scroll_x;
+            if input.last_focused && !is_focused {
+                let cursor_offset = input.cursor_offset();
+                input.selected_range = cursor_offset..cursor_offset;
+                input.selection_reversed = false;
+                input.marked_range = None;
+            }
             if input.last_focused != is_focused {
                 input.last_focused = is_focused;
                 input.blink_start = Instant::now();
@@ -855,6 +1051,8 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::tab))
             .on_action(cx.listener(Self::tab_prev))
             .on_action(cx.listener(Self::enter))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::show_character_palette))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
@@ -887,6 +1085,7 @@ impl Render for TextInput {
                             div()
                                 .flex_1()
                                 .min_w(px(0.0))
+                                .overflow_hidden()
                                 .child(TextElement { input: cx.entity() }),
                         )
                     }),
@@ -910,6 +1109,10 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("shift-left", SelectLeft, None),
         KeyBinding::new("shift-right", SelectRight, None),
         KeyBinding::new("cmd-a", SelectAll, None),
+        KeyBinding::new("cmd-z", Undo, Some("ConfigTextInput")),
+        KeyBinding::new("ctrl-z", Undo, Some("ConfigTextInput")),
+        KeyBinding::new("cmd-shift-z", Redo, Some("ConfigTextInput")),
+        KeyBinding::new("ctrl-shift-z", Redo, Some("ConfigTextInput")),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-x", Cut, None),

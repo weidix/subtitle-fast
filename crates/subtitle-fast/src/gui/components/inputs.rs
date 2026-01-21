@@ -190,6 +190,7 @@ pub(crate) struct TextInput {
     content: SharedString,
     placeholder: SharedString,
     input_kind: InputKind,
+    leading_icon: Option<Icon>,
     blink_start: Instant,
     last_focused: bool,
     invalid: bool,
@@ -212,6 +213,7 @@ impl TextInput {
             content: SharedString::from(""),
             placeholder: placeholder.into(),
             input_kind,
+            leading_icon: None,
             blink_start: Instant::now(),
             last_focused: false,
             invalid: false,
@@ -222,6 +224,12 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
         }
+    }
+
+    /// Adds a leading icon to the text input.
+    pub(crate) fn with_leading_icon(mut self, icon: Icon) -> Self {
+        self.leading_icon = Some(icon);
+        self
     }
 
     pub(crate) fn set_invalid(&mut self, invalid: bool, cx: &mut Context<Self>) {
@@ -828,6 +836,7 @@ impl Render for TextInput {
         } else {
             rgb(0x2f2f2f).into()
         };
+        let icon_color = hsla(0.0, 0.0, 0.65, 1.0);
         div()
             .flex()
             .key_context("ConfigTextInput")
@@ -869,7 +878,18 @@ impl Render for TextInput {
                     .bg(rgb(0x101010))
                     .border_1()
                     .border_color(border_color)
-                    .child(TextElement { input: cx.entity() }),
+                    .child({
+                        let mut row = div().flex().items_center().gap(px(6.0)).w_full();
+                        if let Some(icon) = self.leading_icon {
+                            row = row.child(icon_sm(icon, icon_color));
+                        }
+                        row.child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .child(TextElement { input: cx.entity() }),
+                        )
+                    }),
             )
     }
 }

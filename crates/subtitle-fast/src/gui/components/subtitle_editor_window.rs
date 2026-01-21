@@ -13,6 +13,7 @@ use gpui::{
 use crate::gui::components::detection_sidebar::{SubtitleEdit, SubtitleMessage};
 use crate::gui::components::inputs::{InputKind, TextInput};
 use crate::gui::components::video_player::VideoOpenOptions;
+use crate::gui::components::video_player::VideoPlayerInfoSnapshot;
 use crate::gui::components::{
     DetectionHandle, Titlebar, VideoPlayer, VideoPlayerControlHandle, VideoPlayerInfoHandle,
 };
@@ -22,12 +23,14 @@ use crate::subtitle::TimedSubtitle;
 
 const PREVIEW_SEEK_OFFSET_MS: f64 = 100.0;
 const LIST_MIN_WIDTH: f32 = 320.0;
-const PREVIEW_HEIGHT: f32 = 240.0;
+const DEFAULT_PREVIEW_ASPECT: f32 = 16.0 / 9.0;
 const LIST_ROW_PADDING_Y: f32 = 8.0;
 const LIST_ROW_GAP: f32 = 4.0;
 const LIST_ROW_LINE_GAP: f32 = 2.0;
 const LIST_ROW_TIME_TEXT_SIZE: f32 = 10.0;
 const LIST_ROW_TEXT_SIZE: f32 = 12.0;
+const LIST_ROW_TIME_HEIGHT: f32 = 16.0;
+const LIST_ROW_BADGE_HEIGHT: f32 = 16.0;
 const LIST_ESTIMATED_BODY_LINES: f32 = 2.0;
 const LIST_PADDING_TOP: f32 = 4.0;
 const LIST_PADDING_BOTTOM: f32 = 4.0;
@@ -39,6 +42,9 @@ const SCROLLBAR_ANIMATION_MS: u64 = 180;
 const SCROLLBAR_SETTLE_EPS: f32 = 1.0;
 const SCROLLBAR_CANCEL_EPS: f32 = 1.0;
 const LINE_PLACEHOLDER: &str = "Subtitle line";
+const TIME_INPUT_TRAILING_WIDTH: f32 = 72.0;
+const TIME_INPUT_TRAILING_GAP: f32 = 8.0;
+const TIME_COMPARE_EPS: f64 = 1e-6;
 
 #[derive(Clone, Debug)]
 struct EditableSubtitle {
@@ -46,6 +52,20 @@ struct EditableSubtitle {
     start_ms: f64,
     end_ms: f64,
     lines: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct SelectedSnapshot {
+    id: u64,
+    start_seconds: f64,
+    end_seconds: f64,
+    lines: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TimeField {
+    Start,
+    End,
 }
 
 #[derive(Clone)]
@@ -115,6 +135,7 @@ pub struct SubtitleEditorWindow {
     line_input_subscriptions: Vec<Subscription>,
     search_query: SharedString,
     selected_id: Option<u64>,
+    selected_snapshot: Option<SelectedSnapshot>,
     dirty: bool,
     suppress_input_observers: bool,
     status: Option<StatusMessage>,
@@ -213,6 +234,7 @@ impl SubtitleEditorWindow {
             line_input_subscriptions: Vec::new(),
             search_query: SharedString::from(""),
             selected_id: None,
+            selected_snapshot: None,
             dirty: false,
             suppress_input_observers: false,
             status: None,
@@ -234,6 +256,7 @@ impl SubtitleEditorWindow {
         };
 
         window.register_input_observers(cx);
+        window.select_initial_subtitle(cx);
         if window.video_path.exists() {
             window.open_video();
         } else {
@@ -262,10 +285,8 @@ impl SubtitleEditorWindow {
                 if this.suppress_input_observers {
                     return;
                 }
-                if this.selected_id.is_some() && !this.dirty {
-                    this.dirty = true;
-                    cx.notify();
-                }
+                this.refresh_dirty_state(cx);
+                cx.notify();
             }));
 
         let end = self.end_input.clone();
@@ -274,10 +295,8 @@ impl SubtitleEditorWindow {
                 if this.suppress_input_observers {
                     return;
                 }
-                if this.selected_id.is_some() && !this.dirty {
-                    this.dirty = true;
-                    cx.notify();
-                }
+                this.refresh_dirty_state(cx);
+                cx.notify();
             }));
 
         self.register_line_observers(cx);
@@ -292,12 +311,196 @@ impl SubtitleEditorWindow {
                     if this.suppress_input_observers {
                         return;
                     }
-                    if this.selected_id.is_some() && !this.dirty {
-                        this.dirty = true;
-                        cx.notify();
-                    }
+                    this.refresh_dirty_state(cx);
+                    cx.notify();
                 }));
         }
+    }
+
+    fn select_initial_subtitle(&mut self, cx: &mut Context<Self>) {
+        if self.selected_id.is_some() {
+            return;
+        }
+
+        let Some(entry) = self.subtitles.iter().min_by(|left, right| {
+            left.start_ms
+                .partial_cmp(&right.start_ms)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| left.id.cmp(&right.id))
+        }) else {
+            return;
+        };
+
+        self.load_selected(entry.id, cx);
+    }
+
+    fn set_selected_snapshot(&mut self, id: u64, start_ms: f64, end_ms: f64, lines: Vec<String>) {
+        self.selected_snapshot = Some(SelectedSnapshot {
+            id,
+            start_seconds: normalize_seconds(start_ms / 1000.0),
+            end_seconds: normalize_seconds(end_ms / 1000.0),
+            lines: normalize_lines(&lines),
+        });
+    }
+
+    fn refresh_dirty_state(&mut self, cx: &mut Context<Self>) {
+        let next = self.calculate_dirty(cx);
+        if self.dirty != next {
+            self.dirty = next;
+        }
+    }
+
+    fn calculate_dirty(&self, cx: &mut Context<Self>) -> bool {
+        let Some(snapshot) = self.selected_snapshot.as_ref() else {
+            return false;
+        };
+        if self.selected_id != Some(snapshot.id) {
+            return false;
+        }
+
+        if self.time_field_modified_for_snapshot(TimeField::Start, snapshot, cx) {
+            return true;
+        }
+        if self.time_field_modified_for_snapshot(TimeField::End, snapshot, cx) {
+            return true;
+        }
+
+        let lines = self.collect_lines(cx);
+        lines != snapshot.lines
+    }
+
+    fn time_field_modified_for_snapshot(
+        &self,
+        field: TimeField,
+        snapshot: &SelectedSnapshot,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let original = match field {
+            TimeField::Start => snapshot.start_seconds,
+            TimeField::End => snapshot.end_seconds,
+        };
+        let value = match field {
+            TimeField::Start => self.start_input.read(cx).text(),
+            TimeField::End => self.end_input.read(cx).text(),
+        };
+        let Some(parsed) = parse_seconds_input(value) else {
+            return true;
+        };
+        (parsed - original).abs() > TIME_COMPARE_EPS
+    }
+
+    fn line_is_modified(
+        &self,
+        index: usize,
+        input_state: &LineInputState,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.line_is_new(index) {
+            return false;
+        }
+        let Some(snapshot) = self.selected_snapshot.as_ref() else {
+            return false;
+        };
+        if self.selected_id != Some(snapshot.id) {
+            return false;
+        }
+
+        let original = snapshot.lines.get(index);
+        if input_state.deleted {
+            return original.is_some();
+        }
+
+        let current = input_state.input.read(cx).text();
+        let trimmed = current.as_ref().trim();
+        if trimmed.is_empty() {
+            return original.is_some();
+        }
+
+        match original {
+            Some(value) => value != trimmed,
+            None => true,
+        }
+    }
+
+    fn line_is_new(&self, index: usize) -> bool {
+        let Some(snapshot) = self.selected_snapshot.as_ref() else {
+            return false;
+        };
+        if self.selected_id != Some(snapshot.id) {
+            return false;
+        }
+        snapshot.lines.get(index).is_none()
+    }
+
+    fn time_field_modified(&self, field: TimeField, cx: &mut Context<Self>) -> bool {
+        let Some(snapshot) = self.selected_snapshot.as_ref() else {
+            return false;
+        };
+        if self.selected_id != Some(snapshot.id) {
+            return false;
+        }
+        self.time_field_modified_for_snapshot(field, snapshot, cx)
+    }
+
+    fn rollback_time_field(&mut self, field: TimeField, cx: &mut Context<Self>) {
+        let Some(snapshot) = self.selected_snapshot.as_ref() else {
+            return;
+        };
+        if self.selected_id != Some(snapshot.id) {
+            return;
+        }
+        let target = match field {
+            TimeField::Start => snapshot.start_seconds,
+            TimeField::End => snapshot.end_seconds,
+        };
+        let text = format_seconds_value(target);
+        self.suppress_input_observers = true;
+        match field {
+            TimeField::Start => {
+                self.start_input.update(cx, |input: &mut TextInput, cx| {
+                    input.set_text(text.clone(), cx);
+                });
+            }
+            TimeField::End => {
+                self.end_input.update(cx, |input: &mut TextInput, cx| {
+                    input.set_text(text.clone(), cx);
+                });
+            }
+        }
+        self.suppress_input_observers = false;
+        self.refresh_dirty_state(cx);
+        cx.notify();
+    }
+
+    fn rollback_line(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.line_inputs.len() {
+            return;
+        }
+        let Some(snapshot) = self.selected_snapshot.as_ref() else {
+            return;
+        };
+
+        self.suppress_input_observers = true;
+        if let Some(original) = snapshot.lines.get(index).cloned() {
+            if let Some(line) = self.line_inputs.get_mut(index) {
+                line.deleted = false;
+                line.input.update(cx, |input: &mut TextInput, cx| {
+                    input.set_text(original, cx);
+                });
+            }
+        } else if self.line_inputs.len() > 1 {
+            self.line_inputs.remove(index);
+        } else if let Some(line) = self.line_inputs.get_mut(index) {
+            line.deleted = false;
+            line.input.update(cx, |input: &mut TextInput, cx| {
+                input.set_text("", cx);
+            });
+        }
+        self.suppress_input_observers = false;
+
+        self.register_line_observers(cx);
+        self.refresh_dirty_state(cx);
+        cx.notify();
     }
 
     fn build_line_input(cx: &mut Context<Self>) -> LineInputState {
@@ -333,21 +536,31 @@ impl SubtitleEditorWindow {
         let input_state = Self::build_line_input(cx);
         self.line_inputs.push(input_state);
         self.register_line_observers(cx);
-        if self.selected_id.is_some() && !self.dirty {
-            self.dirty = true;
-        }
+        self.refresh_dirty_state(cx);
         cx.notify();
     }
 
     fn toggle_line_deleted(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.should_remove_new_line(index) {
+            if index < self.line_inputs.len() {
+                self.line_inputs.remove(index);
+            }
+            self.register_line_observers(cx);
+            self.refresh_dirty_state(cx);
+            cx.notify();
+            return;
+        }
+
         let Some(line) = self.line_inputs.get_mut(index) else {
             return;
         };
         line.deleted = !line.deleted;
-        if self.selected_id.is_some() && !self.dirty {
-            self.dirty = true;
-        }
+        self.refresh_dirty_state(cx);
         cx.notify();
+    }
+
+    fn should_remove_new_line(&self, index: usize) -> bool {
+        self.line_is_new(index)
     }
 
     fn open_video(&mut self) {
@@ -416,6 +629,7 @@ impl SubtitleEditorWindow {
 
     fn clear_inputs(&mut self, cx: &mut Context<Self>) {
         self.suppress_input_observers = true;
+        self.selected_snapshot = None;
         self.start_input.update(cx, |input: &mut TextInput, cx| {
             input.set_text("", cx);
         });
@@ -429,6 +643,7 @@ impl SubtitleEditorWindow {
     fn load_selected(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(entry_index) = self.subtitles.iter().position(|entry| entry.id == id) else {
             self.selected_id = None;
+            self.selected_snapshot = None;
             self.clear_inputs(cx);
             return;
         };
@@ -440,6 +655,7 @@ impl SubtitleEditorWindow {
 
         self.selected_id = Some(id);
         self.dirty = false;
+        self.set_selected_snapshot(id, start_ms, end_ms, lines.clone());
         self.suppress_input_observers = true;
         self.start_input.update(cx, |input: &mut TextInput, cx| {
             input.set_text(format_seconds_input(start_ms), cx);
@@ -518,7 +734,8 @@ impl SubtitleEditorWindow {
         };
         match self.detection.update_subtitle(edit) {
             Ok(()) => {
-                self.update_local_subtitle(id, start_ms, end_ms, lines);
+                self.update_local_subtitle(id, start_ms, end_ms, lines.clone());
+                self.set_selected_snapshot(id, start_ms, end_ms, lines);
                 self.dirty = false;
                 self.set_status("Subtitle updated.", false, cx);
                 self.seek_preview(start_ms);
@@ -667,6 +884,7 @@ impl SubtitleEditorWindow {
             .flex()
             .items_center()
             .gap(px(6.0))
+            .h(px(LIST_ROW_TIME_HEIGHT))
             .text_size(px(LIST_ROW_TIME_TEXT_SIZE))
             .text_color(time_color)
             .child(format!(
@@ -678,10 +896,14 @@ impl SubtitleEditorWindow {
         if is_dirty {
             time_row = time_row.child(
                 div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .px(px(6.0))
-                    .py(px(1.0))
+                    .h(px(LIST_ROW_BADGE_HEIGHT))
+                    .line_height(px(LIST_ROW_BADGE_HEIGHT))
                     .rounded(px(4.0))
-                    .text_size(px(9.0))
+                    .text_size(px(8.0))
                     .text_color(dirty_badge_text)
                     .bg(dirty_badge_bg)
                     .child("Edited"),
@@ -1185,10 +1407,11 @@ impl SubtitleEditorWindow {
 
             let mut rows = div().flex().flex_col().w_full().min_w(px(0.0));
             for index in render_start..render_end {
-                if let Some(entry_index) = filtered.get(index) {
-                    if let Some(entry) = self.subtitles.get(*entry_index) {
-                        rows = rows.child(self.subtitle_row(entry, cx));
-                    }
+                if let Some(entry) = filtered
+                    .get(index)
+                    .and_then(|entry_index| self.subtitles.get(*entry_index))
+                {
+                    rows = rows.child(self.subtitle_row(entry, cx));
                 }
             }
 
@@ -1292,11 +1515,15 @@ impl SubtitleEditorWindow {
         let border_color = hsla(0.0, 0.0, 1.0, 0.12);
         let placeholder_color = hsla(0.0, 0.0, 1.0, 0.55);
         let snapshot = self.player_info.snapshot();
+        let aspect_ratio = preview_aspect_ratio(&snapshot);
 
         let mut preview = div()
             .relative()
-            .h(px(PREVIEW_HEIGHT))
             .w_full()
+            .map(|mut view| {
+                view.style().aspect_ratio = Some(aspect_ratio);
+                view
+            })
             .border_1()
             .border_color(border_color)
             .bg(rgb(0x111111))
@@ -1329,6 +1556,8 @@ impl SubtitleEditorWindow {
         let delete_enabled = !line_inputs.is_empty();
         let start_input = self.start_input.clone();
         let end_input = self.end_input.clone();
+        let start_modified = self.time_field_modified(TimeField::Start, cx);
+        let end_modified = self.time_field_modified(TimeField::End, cx);
 
         let time_row = div()
             .flex()
@@ -1339,13 +1568,8 @@ impl SubtitleEditorWindow {
                     .flex_col()
                     .gap(px(4.0))
                     .flex_1()
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(label_color)
-                            .child("Start (s)"),
-                    )
-                    .child(start_input),
+                    .child(self.time_field_label("Start (s)", start_modified))
+                    .child(self.time_input_row(TimeField::Start, start_input, start_modified, cx)),
             )
             .child(
                 div()
@@ -1353,19 +1577,14 @@ impl SubtitleEditorWindow {
                     .flex_col()
                     .gap(px(4.0))
                     .flex_1()
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(label_color)
-                            .child("End (s)"),
-                    )
-                    .child(end_input),
+                    .child(self.time_field_label("End (s)", end_modified))
+                    .child(self.time_input_row(TimeField::End, end_input, end_modified, cx)),
             );
 
         let text_row = div()
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(px(6.0))
             .child(
                 div()
                     .text_size(px(11.0))
@@ -1376,7 +1595,7 @@ impl SubtitleEditorWindow {
                 let mut line_rows = div().flex().flex_col().gap(px(6.0));
                 for (index, input) in line_inputs.into_iter().enumerate() {
                     line_rows =
-                        line_rows.child(Self::line_input_row(index, delete_enabled, input, cx));
+                        line_rows.child(self.line_input_row(index, delete_enabled, input, cx));
                 }
                 line_rows
             })
@@ -1384,23 +1603,33 @@ impl SubtitleEditorWindow {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
-                    .h(px(28.0))
-                    .px(px(10.0))
-                    .rounded(px(6.0))
-                    .bg(add_bg)
-                    .text_size(px(11.0))
-                    .text_color(add_text)
-                    .cursor_pointer()
-                    .hover(move |style| style.bg(add_hover))
-                    .child(icon_sm(Icon::Plus, add_text))
-                    .child("Add line")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _event, _window, cx| {
-                            this.add_line_input(cx);
-                        }),
-                    ),
+                    .gap(px(TIME_INPUT_TRAILING_GAP))
+                    .child(
+                        div().flex_1().min_w(px(0.0)).child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .h(px(30.0))
+                                .w_full()
+                                .px(px(10.0))
+                                .rounded(px(6.0))
+                                .bg(add_bg)
+                                .text_size(px(11.0))
+                                .text_color(add_text)
+                                .cursor_pointer()
+                                .hover(move |style| style.bg(add_hover))
+                                .child(icon_sm(Icon::Plus, add_text))
+                                .child("Add line")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _event, _window, cx| {
+                                        this.add_line_input(cx);
+                                    }),
+                                ),
+                        ),
+                    )
+                    .child(div().w(px(TIME_INPUT_TRAILING_WIDTH)).h(px(30.0))),
             )
             .child(
                 div()
@@ -1417,7 +1646,100 @@ impl SubtitleEditorWindow {
             .child(text_row)
     }
 
+    fn time_input_row(
+        &self,
+        field: TimeField,
+        input: Entity<TextInput>,
+        is_modified: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + 'static {
+        let modified_accent = hsla(0.08, 0.85, 0.6, 1.0);
+        let modified_bg = hsla(0.08, 0.85, 0.55, 0.12);
+        let modified_hover = hsla(0.08, 0.85, 0.35, 0.18);
+
+        let mut input_wrapper = div().flex_1().min_w(px(0.0)).relative().child(input);
+        if is_modified {
+            input_wrapper = input_wrapper.child(
+                div()
+                    .absolute()
+                    .left(px(3.0))
+                    .top(px(4.0))
+                    .bottom(px(4.0))
+                    .w(px(2.0))
+                    .rounded(px(2.0))
+                    .bg(modified_accent),
+            );
+        }
+
+        let rollback_button = if is_modified {
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .h(px(28.0))
+                .w(px(TIME_INPUT_TRAILING_WIDTH))
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .bg(modified_bg)
+                .hover(move |style| style.bg(modified_hover))
+                .child(icon_sm(Icon::RotateCcw, modified_accent))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _event, _window, cx| {
+                        this.rollback_time_field(field, cx);
+                    }),
+                )
+        } else {
+            div().w(px(TIME_INPUT_TRAILING_WIDTH)).h(px(28.0))
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .gap(px(TIME_INPUT_TRAILING_GAP))
+            .child(input_wrapper)
+            .child(rollback_button)
+    }
+
+    fn time_field_label(
+        &self,
+        label: &'static str,
+        is_modified: bool,
+    ) -> impl IntoElement + 'static {
+        let label_color = hsla(0.0, 0.0, 0.75, 1.0);
+        let dirty_badge_bg = hsla(0.08, 0.75, 0.45, 0.25);
+        let dirty_badge_text = hsla(0.08, 0.8, 0.7, 1.0);
+
+        let mut row = div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .text_size(px(11.0))
+            .text_color(label_color)
+            .child(label);
+
+        if is_modified {
+            row = row.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .px(px(6.0))
+                    .h(px(14.0))
+                    .line_height(px(14.0))
+                    .rounded(px(4.0))
+                    .text_size(px(8.0))
+                    .text_color(dirty_badge_text)
+                    .bg(dirty_badge_bg)
+                    .child("Edited"),
+            );
+        }
+
+        row
+    }
+
     fn line_input_row(
+        &self,
         index: usize,
         delete_enabled: bool,
         input_state: LineInputState,
@@ -1429,6 +1751,12 @@ impl SubtitleEditorWindow {
         let deleted_badge_text = hsla(0.0, 0.7, 0.7, 1.0);
         let restore_color = hsla(0.12, 0.7, 0.65, 1.0);
         let restore_hover = hsla(0.12, 0.7, 0.35, 0.18);
+        let modified_accent = hsla(0.08, 0.85, 0.6, 1.0);
+        let modified_bg = hsla(0.08, 0.85, 0.55, 0.12);
+        let modified_hover = hsla(0.08, 0.85, 0.35, 0.18);
+        let disabled_icon = hsla(0.0, 0.0, 1.0, 0.35);
+        let new_accent = hsla(0.55, 0.55, 0.65, 1.0);
+        let new_bg = hsla(0.55, 0.55, 0.45, 0.12);
         let delete_color = if delete_enabled {
             if input_state.deleted {
                 restore_color
@@ -1443,12 +1771,43 @@ impl SubtitleEditorWindow {
         } else {
             hsla(0.0, 0.0, 1.0, 0.12)
         };
+        let is_new_line = self.line_is_new(index);
+        let is_modified = self.line_is_modified(index, &input_state, cx);
         let toggle_icon = if input_state.deleted {
             Icon::RotateCcw
         } else {
             Icon::Trash
         };
         let input = input_state.input.clone();
+        let rollback_enabled = is_modified && !input_state.deleted;
+        let mut rollback_button = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(28.0))
+            .h(px(28.0))
+            .rounded(px(6.0))
+            .child(icon_sm(
+                Icon::RotateCcw,
+                if rollback_enabled {
+                    modified_accent
+                } else {
+                    disabled_icon
+                },
+            ));
+
+        if rollback_enabled {
+            rollback_button = rollback_button
+                .cursor_pointer()
+                .hover(move |style| style.bg(modified_hover))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _event, _window, cx| {
+                        this.rollback_line(index, cx);
+                    }),
+                );
+        }
+
         let mut delete_button = div()
             .flex()
             .items_center()
@@ -1507,15 +1866,48 @@ impl SubtitleEditorWindow {
                     ),
             )
         } else {
-            div().flex_1().min_w(px(0.0)).child(input)
+            let mut wrapper = div().flex_1().min_w(px(0.0)).relative().child(input);
+            if is_new_line {
+                wrapper = wrapper.rounded(px(6.0)).bg(new_bg).child(
+                    div()
+                        .absolute()
+                        .left(px(3.0))
+                        .top(px(4.0))
+                        .bottom(px(4.0))
+                        .w(px(2.0))
+                        .rounded(px(2.0))
+                        .bg(new_accent),
+                );
+            } else if is_modified {
+                wrapper = wrapper.rounded(px(6.0)).bg(modified_bg).child(
+                    div()
+                        .absolute()
+                        .left(px(3.0))
+                        .top(px(4.0))
+                        .bottom(px(4.0))
+                        .w(px(2.0))
+                        .rounded(px(2.0))
+                        .bg(modified_accent),
+                );
+            }
+            wrapper
         };
+
+        let trailing_controls = div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(px(4.0))
+            .w(px(TIME_INPUT_TRAILING_WIDTH))
+            .child(delete_button)
+            .child(rollback_button);
 
         div()
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(TIME_INPUT_TRAILING_GAP))
             .child(content)
-            .child(delete_button)
+            .child(trailing_controls)
     }
 
     fn action_row(&self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
@@ -1530,15 +1922,22 @@ impl SubtitleEditorWindow {
 
         let can_apply = self.selected_id.is_some() && self.dirty;
         let can_restore = self.selected_id.is_some() && self.dirty;
+        let apply_icon_color = if can_apply {
+            primary_text
+        } else {
+            disabled_text
+        };
 
         let mut apply_button = div()
             .flex()
             .items_center()
             .justify_center()
+            .gap(px(6.0))
             .h(px(30.0))
             .px(px(16.0))
             .rounded(px(6.0))
             .text_size(px(12.0))
+            .child(icon_sm(Icon::Check, apply_icon_color))
             .child("Apply");
 
         if can_apply {
@@ -1663,6 +2062,18 @@ impl Render for SubtitleEditorWindow {
     }
 }
 
+fn parse_seconds_input(value: SharedString) -> Option<f64> {
+    let raw = value.as_ref().trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let parsed: f64 = raw.parse().ok()?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return None;
+    }
+    Some(parsed)
+}
+
 fn parse_seconds(label: &str, value: SharedString) -> Result<f64, SharedString> {
     let raw = value.as_ref().trim();
     if raw.is_empty() {
@@ -1689,6 +2100,14 @@ fn format_seconds_input(ms: f64) -> String {
     }
     let seconds = normalize_seconds(ms / 1000.0);
     format!("{seconds:.2}")
+}
+
+fn format_seconds_value(seconds: f64) -> String {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return "0.00".to_string();
+    }
+    let value = normalize_seconds(seconds);
+    format!("{value:.2}")
 }
 
 fn subtitle_editor_title(label: &SharedString) -> SharedString {
@@ -1721,6 +2140,21 @@ fn preview_target(start_ms: f64) -> Option<Duration> {
     }
     let target_ms = (start_ms + PREVIEW_SEEK_OFFSET_MS).max(0.0);
     Some(Duration::from_secs_f64(target_ms / 1000.0))
+}
+
+fn preview_aspect_ratio(snapshot: &VideoPlayerInfoSnapshot) -> f32 {
+    let (Some(width), Some(height)) = (snapshot.metadata.width, snapshot.metadata.height) else {
+        return DEFAULT_PREVIEW_ASPECT;
+    };
+    if width == 0 || height == 0 {
+        return DEFAULT_PREVIEW_ASPECT;
+    }
+    let aspect = width as f32 / height as f32;
+    if aspect.is_finite() && aspect > 0.0 {
+        aspect
+    } else {
+        DEFAULT_PREVIEW_ASPECT
+    }
 }
 
 fn normalize_lines(lines: &[String]) -> Vec<String> {

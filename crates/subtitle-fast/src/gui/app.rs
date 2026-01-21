@@ -79,7 +79,7 @@ impl SubtitleFastApp {
                     window_decorations: Some(WindowDecorations::Client),
                     ..Default::default()
                 },
-                move |_, cx| {
+                move |window, cx| {
                     let sessions = SessionHandle::new();
                     let titlebar = cx.new(|_| Titlebar::new("main-titlebar", ""));
                     let titlebar_for_window = titlebar.clone();
@@ -182,6 +182,27 @@ impl SubtitleFastApp {
                             confirm_dialog: confirm_dialog_view.clone(),
                             titlebar_actions,
                         })
+                    });
+                    let main_close_for_should_close = main_window.downgrade();
+                    window.on_window_should_close(cx, move |_window, cx| {
+                        if let Some(main_window) = main_close_for_should_close.upgrade() {
+                            let _ = main_window.update(cx, |this, cx| {
+                                this.close_aux_windows(cx);
+                            });
+                        }
+                        true
+                    });
+                    let main_close_for_titlebar = main_window.downgrade();
+                    let _ = titlebar.update(cx, move |titlebar, cx| {
+                        let close_action = Arc::new(move |window: &mut Window, cx: &mut App| {
+                            if let Some(main_window) = main_close_for_titlebar.upgrade() {
+                                let _ = main_window.update(cx, |this, cx| {
+                                    this.close_aux_windows(cx);
+                                });
+                            }
+                            window.remove_window();
+                        });
+                        titlebar.set_on_close(Some(close_action), cx);
                     });
                     let weak_main = main_window.downgrade();
                     let add_handle = weak_main.clone();
@@ -441,6 +462,24 @@ impl MainWindow {
                 window.activate_window();
             });
             self.help_window = Some(handle);
+        }
+    }
+
+    fn close_aux_windows(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.config_window.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+        if let Some(handle) = self.help_window.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+
+        let editor_windows: Vec<WindowHandle<SubtitleEditorWindow>> = self
+            .subtitle_editor_windows
+            .drain()
+            .map(|(_, handle)| handle)
+            .collect();
+        for handle in editor_windows {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
     }
 

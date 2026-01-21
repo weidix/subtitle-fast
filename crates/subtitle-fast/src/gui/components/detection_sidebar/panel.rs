@@ -1,7 +1,8 @@
 use gpui::prelude::*;
-use gpui::{Context, Entity, FontWeight, Render, Window, div, hsla, px, rgb};
+use gpui::{Action, Context, Entity, FontWeight, Render, Window, div, hsla, px, rgb};
 
 use crate::gui::icons::{Icon, icon_sm};
+use crate::gui::menus::OpenSubtitleEditor;
 
 use super::{DetectedSubtitlesList, DetectionControls, DetectionHandle, DetectionMetrics};
 
@@ -49,13 +50,22 @@ impl DetectionSidebar {
 
     fn subtitles_header(&self, cx: &Context<Self>) -> impl IntoElement {
         let title_color = hsla(0.0, 0.0, 1.0, 0.72);
+        let progress = self.handle.progress_snapshot();
+        let edit_enabled = progress.completed;
         let export_enabled = self.handle.has_subtitles();
+        let edit_color = if edit_enabled {
+            hsla(0.0, 0.0, 1.0, 0.9)
+        } else {
+            hsla(0.0, 0.0, 1.0, 0.35)
+        };
         let export_color = if export_enabled {
             hsla(0.0, 0.0, 1.0, 0.9)
         } else {
             hsla(0.0, 0.0, 1.0, 0.35)
         };
+        let edit_hover = hsla(0.0, 0.0, 1.0, 0.08);
         let export_hover = hsla(0.0, 0.0, 1.0, 0.08);
+        let edit_border = hsla(0.0, 0.0, 1.0, 0.12);
         let export_border = hsla(0.0, 0.0, 1.0, 0.12);
 
         let label = div()
@@ -71,6 +81,27 @@ impl DetectionSidebar {
                     .h(px(14.0)),
             )
             .child("Detected Subtitles");
+
+        let mut edit_button = div()
+            .id(("detection-sidebar-edit", cx.entity_id()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(26.0))
+            .h(px(26.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(edit_border)
+            .child(icon_sm(Icon::Edit, edit_color).w(px(14.0)).h(px(14.0)));
+
+        if edit_enabled {
+            edit_button = edit_button
+                .cursor_pointer()
+                .hover(move |s| s.bg(edit_hover))
+                .on_click(cx.listener(|_, _event, window, cx| {
+                    window.dispatch_action(OpenSubtitleEditor.boxed_clone(), cx);
+                }));
+        }
 
         let mut export_button = div()
             .id(("detection-sidebar-export", cx.entity_id()))
@@ -100,7 +131,14 @@ impl DetectionSidebar {
             .justify_between()
             .gap(px(8.0))
             .child(label)
-            .child(export_button)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(edit_button)
+                    .child(export_button),
+            )
     }
 
     fn request_export(&self, window: &mut Window, cx: &mut Context<Self>) {

@@ -1,4 +1,5 @@
 use std::mem;
+use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::*;
@@ -170,6 +171,7 @@ pub struct Titlebar {
     platform_style: PlatformStyle,
     children: Vec<AnyElement>,
     should_move: bool,
+    on_close: Option<Arc<dyn Fn(&mut Window, &mut App) + 'static>>,
 }
 
 impl Titlebar {
@@ -180,6 +182,7 @@ impl Titlebar {
             platform_style: PlatformStyle::platform(),
             children: Vec::new(),
             should_move: false,
+            on_close: None,
         }
     }
 
@@ -188,6 +191,17 @@ impl Titlebar {
         T: IntoIterator<Item = AnyElement>,
     {
         self.children = children.into_iter().collect();
+    }
+
+    /// Sets the close handler for the titlebar close control.
+    /// When unset, the window will be closed directly.
+    pub fn set_on_close(
+        &mut self,
+        on_close: Option<Arc<dyn Fn(&mut Window, &mut App) + 'static>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_close = on_close;
+        cx.notify();
     }
 
     #[cfg(target_os = "windows")]
@@ -253,6 +267,7 @@ impl Render for Titlebar {
             } else {
                 px(12.0)
             };
+        let close_action = self.on_close.clone();
 
         let drag_region = div()
             .flex()
@@ -337,7 +352,13 @@ impl Render for Titlebar {
                 "X",
                 WindowControlArea::Close,
                 hsla(0.0, 0.8, 0.55, 0.35),
-                |window, _| window.remove_window(),
+                move |window, cx| {
+                    if let Some(on_close) = close_action.as_ref() {
+                        (on_close)(window, cx);
+                    } else {
+                        window.remove_window();
+                    }
+                },
             ));
         }
 

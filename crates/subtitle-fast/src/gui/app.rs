@@ -16,12 +16,13 @@ use crate::gui::components::{
     ConfirmDialogButtonStyle, ConfirmDialogConfig, ConfirmDialogTitle, DetectedSubtitlesList,
     DetectionControls, DetectionHandle, DetectionMetrics, DetectionRunState, DetectionSidebar,
     DetectionSidebarHost, DragRange, DraggableEdge, HelpWindow, Sidebar, SidebarConfig,
-    SidebarHandle, TaskSidebar, TaskSidebarCallbacks, Titlebar, TitlebarActions,
-    TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle, VideoPlayer,
-    VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay, VideoToolbar,
+    SidebarHandle, SubtitleEditorWindow, TaskSidebar, TaskSidebarCallbacks, Titlebar,
+    TitlebarActions, TitlebarActionsCallbacks, VideoControls, VideoLumaControls, VideoLumaHandle,
+    VideoPlayer, VideoPlayerControlHandle, VideoPlayerInfoHandle, VideoRoiHandle, VideoRoiOverlay,
+    VideoToolbar,
 };
 use crate::gui::icons::{Icon, icon_md, icon_sm};
-use crate::gui::menus;
+use crate::gui::menus::{self, OpenSubtitleEditor};
 use crate::gui::runtime;
 use crate::gui::session::{SessionHandle, SessionId, VideoSession};
 
@@ -78,7 +79,7 @@ impl SubtitleFastApp {
                     window_decorations: Some(WindowDecorations::Client),
                     ..Default::default()
                 },
-                move |_, cx| {
+                move |window, cx| {
                     let sessions = SessionHandle::new();
                     let titlebar = cx.new(|_| Titlebar::new("main-titlebar", ""));
                     let titlebar_for_window = titlebar.clone();
@@ -181,6 +182,27 @@ impl SubtitleFastApp {
                             confirm_dialog: confirm_dialog_view.clone(),
                             titlebar_actions,
                         })
+                    });
+                    let main_close_for_should_close = main_window.downgrade();
+                    window.on_window_should_close(cx, move |_window, cx| {
+                        if let Some(main_window) = main_close_for_should_close.upgrade() {
+                            let _ = main_window.update(cx, |this, cx| {
+                                this.close_aux_windows(cx);
+                            });
+                        }
+                        true
+                    });
+                    let main_close_for_titlebar = main_window.downgrade();
+                    let _ = titlebar.update(cx, move |titlebar, cx| {
+                        let close_action = Arc::new(move |window: &mut Window, cx: &mut App| {
+                            if let Some(main_window) = main_close_for_titlebar.upgrade() {
+                                let _ = main_window.update(cx, |this, cx| {
+                                    this.close_aux_windows(cx);
+                                });
+                            }
+                            window.remove_window();
+                        });
+                        titlebar.set_on_close(Some(close_action), cx);
                     });
                     let weak_main = main_window.downgrade();
                     let add_handle = weak_main.clone();
@@ -354,6 +376,7 @@ pub struct MainWindow {
     menu_refresh_listeners: HashMap<SessionId, MenuRefreshListener>,
     config_window: Option<WindowHandle<ConfigWindow>>,
     help_window: Option<WindowHandle<HelpWindow>>,
+    subtitle_editor_windows: HashMap<SessionId, WindowHandle<SubtitleEditorWindow>>,
 }
 
 struct MainWindowParts {
@@ -403,6 +426,7 @@ impl MainWindow {
             menu_refresh_listeners: HashMap::new(),
             config_window: None,
             help_window: None,
+            subtitle_editor_windows: HashMap::new(),
         }
     }
 
@@ -439,6 +463,99 @@ impl MainWindow {
             });
             self.help_window = Some(handle);
         }
+    }
+
+    fn close_aux_windows(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.config_window.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+        if let Some(handle) = self.help_window.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+
+        let editor_windows: Vec<WindowHandle<SubtitleEditorWindow>> = self
+            .subtitle_editor_windows
+            .drain()
+            .map(|(_, handle)| handle)
+            .collect();
+        for handle in editor_windows {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+    }
+
+    /// Opens the subtitle editor window or focuses it if already open.
+    pub(crate) fn open_subtitle_editor_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session_id) = self.active_session else {
+            let task = window.spawn(cx, |cx: &mut gpui::AsyncWindowContext| {
+                let mut cx = cx.clone();
+                async move {
+                    let buttons = [PromptButton::ok("OK")];
+                    let _ = cx
+                        .prompt(
+                            PromptLevel::Warning,
+                            "No active task",
+                            Some("Select or add a task before editing subtitles."),
+                            &buttons,
+                        )
+                        .await;
+                }
+            });
+            drop(task);
+            return;
+        };
+
+        if let Some(handle) = self.subtitle_editor_windows.get(&session_id)
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+        self.subtitle_editor_windows.remove(&session_id);
+
+        let Some(session) = self.sessions.session(session_id) else {
+            return;
+        };
+
+        if !session.detection.progress_snapshot().completed {
+            let task = window.spawn(cx, |cx: &mut gpui::AsyncWindowContext| {
+                let mut cx = cx.clone();
+                async move {
+                    let buttons = [PromptButton::ok("OK")];
+                    let _ = cx
+                        .prompt(
+                            PromptLevel::Warning,
+                            "Subtitle editor unavailable",
+                            Some("Wait for the task to complete before editing subtitles."),
+                            &buttons,
+                        )
+                        .await;
+                }
+            });
+            drop(task);
+            return;
+        }
+
+        if let Some(handle) = SubtitleEditorWindow::open(session, cx) {
+            let _ = handle.update(cx, |_, window, _| {
+                window.activate_window();
+            });
+            self.subtitle_editor_windows.insert(session_id, handle);
+        }
+    }
+
+    fn can_open_subtitle_editor(&self) -> bool {
+        let Some(session_id) = self.active_session else {
+            return false;
+        };
+        let Some(session) = self.sessions.session(session_id) else {
+            return false;
+        };
+        session.detection.progress_snapshot().completed
     }
 
     /// Prompts the user to select a video file and queues a new session.
@@ -558,12 +675,15 @@ impl MainWindow {
         };
         self.load_session(&session, cx);
         self.update_detection_sidebar(Some(session.detection.clone()), cx);
+        self.refresh_app_menus(cx);
+        cx.notify();
     }
 
     fn remove_session(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
         if let Some(session) = self.sessions.session(session_id) {
             session.detection.cancel();
         }
+        self.subtitle_editor_windows.remove(&session_id);
         if self.active_session == Some(session_id) {
             self.active_session = None;
             self.release_player(cx);
@@ -572,15 +692,18 @@ impl MainWindow {
         self.sessions.remove_session(session_id);
         self.notify_task_sidebar(cx);
         self.refresh_app_menus(cx);
+        cx.notify();
     }
 
     fn refresh_app_menus(&self, cx: &mut Context<Self>) {
         let sessions = self.sessions.sessions_snapshot();
+        let editor_enabled = self.can_open_subtitle_editor();
         if cfg!(target_os = "macos") {
-            menus::set_macos_menus(cx, &sessions);
+            menus::set_macos_menus(cx, &sessions, editor_enabled);
         } else {
-            menus::set_app_menus(cx, &sessions);
+            menus::set_app_menus(cx, &sessions, editor_enabled);
         }
+        cx.notify();
     }
 
     fn sync_menu_refresh_listeners(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1057,7 +1180,7 @@ impl Render for MainWindow {
             titlebar.set_children(titlebar_children);
         });
 
-        div()
+        let mut root = div()
             .relative()
             .flex()
             .flex_col()
@@ -1246,7 +1369,13 @@ impl Render for MainWindow {
                     .child(video_area)
                     .child(self.right_panel.clone())
             })
-            .child(self.confirm_dialog.clone())
+            .child(self.confirm_dialog.clone());
+
+        root = root.on_action(cx.listener(|this, _: &OpenSubtitleEditor, window, cx| {
+            this.open_subtitle_editor_window(window, cx);
+        }));
+
+        root
     }
 }
 

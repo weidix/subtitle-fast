@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures_util::StreamExt;
@@ -13,8 +13,8 @@ use crate::settings::{
     DecoderSettings, DetectionSettings, EffectiveSettings, OcrSettings, OutputSettings,
 };
 use crate::stage::{
-    self, MergedSubtitle, PipelineConfig, PipelineHandle, PipelineProgress, SubtitleUpdate,
-    SubtitleUpdateKind, TimedSubtitle,
+    self, MergedSubtitle, PipelineConfig, PipelineHandle, PipelineProgress, SubtitleLine,
+    SubtitleUpdate, SubtitleUpdateKind, TimedSubtitle,
 };
 use subtitle_fast_decoder::{Backend, Configuration};
 use subtitle_fast_types::{DecoderError, RoiConfig};
@@ -58,6 +58,16 @@ pub enum SubtitleMessage {
     Reset,
     New(TimedSubtitle),
     Updated(TimedSubtitle),
+    Removed(u64),
+}
+
+/// Editable subtitle fields for the editor window.
+#[derive(Clone, Debug)]
+pub(crate) struct SubtitleEdit {
+    pub id: u64,
+    pub start_ms: f64,
+    pub end_ms: f64,
+    pub lines: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -139,6 +149,14 @@ impl DetectionHandle {
 
     pub fn has_subtitles(&self) -> bool {
         self.inner.has_subtitles()
+    }
+
+    pub(crate) fn update_subtitle(&self, edit: SubtitleEdit) -> Result<(), String> {
+        self.inner.update_subtitle(edit)
+    }
+
+    pub(crate) fn remove_subtitle(&self, id: u64) -> Result<(), String> {
+        self.inner.remove_subtitle(id)
     }
 
     pub fn export_dialog_seed(&self) -> (PathBuf, Option<String>) {
@@ -437,6 +455,60 @@ impl DetectionPipelineInner {
             .unwrap_or(false)
     }
 
+    fn update_subtitle(&self, edit: SubtitleEdit) -> Result<(), String> {
+        if !edit.start_ms.is_finite() || !edit.end_ms.is_finite() {
+            return Err("Subtitle timing must be finite.".to_string());
+        }
+        if edit.start_ms < 0.0 || edit.end_ms < 0.0 {
+            return Err("Subtitle timing must be positive.".to_string());
+        }
+        if edit.end_ms < edit.start_ms {
+            return Err("Subtitle end time must be >= start time.".to_string());
+        }
+
+        let start_time = Duration::from_secs_f64(edit.start_ms / 1000.0);
+        let end_time = Duration::from_secs_f64(edit.end_ms / 1000.0);
+        let lines = build_subtitle_lines(edit.lines);
+
+        let timed = if let Ok(mut slot) = self.subtitles.lock() {
+            if let Some(existing) = slot.iter_mut().find(|subtitle| subtitle.id == edit.id) {
+                existing.start_time = start_time;
+                existing.end_time = end_time;
+                existing.lines = lines;
+                existing.as_timed()
+            } else {
+                return Err("Subtitle not found.".to_string());
+            }
+        } else {
+            return Err("Subtitle store unavailable.".to_string());
+        };
+
+        self.send_subtitle_message(SubtitleMessage::Updated(timed));
+
+        Ok(())
+    }
+
+    fn remove_subtitle(&self, id: u64) -> Result<(), String> {
+        let removed = if let Ok(mut slot) = self.subtitles.lock() {
+            if let Some(index) = slot.iter().position(|subtitle| subtitle.id == id) {
+                slot.remove(index);
+                true
+            } else {
+                false
+            }
+        } else {
+            return Err("Subtitle store unavailable.".to_string());
+        };
+
+        if !removed {
+            return Err("Subtitle not found.".to_string());
+        }
+
+        self.send_subtitle_message(SubtitleMessage::Removed(id));
+
+        Ok(())
+    }
+
     fn subtitles_snapshot(&self) -> Vec<TimedSubtitle> {
         let mut snapshot = self
             .subtitles
@@ -508,6 +580,27 @@ impl DetectionPipelineInner {
             eprintln!("subtitle export failed: tokio runtime not initialized");
         }
     }
+}
+
+fn build_subtitle_lines(lines: Vec<String>) -> Vec<SubtitleLine> {
+    let cleaned: Vec<String> = lines
+        .into_iter()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    let count = cleaned.len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let step = 1.0 / count as f32;
+    cleaned
+        .into_iter()
+        .enumerate()
+        .map(|(idx, text)| SubtitleLine {
+            center: (idx as f32 + 0.5) * step,
+            text,
+        })
+        .collect()
 }
 
 async fn run_detection_task(

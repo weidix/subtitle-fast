@@ -17,7 +17,7 @@ struct DetectedSubtitleEntry {
     id: u64,
     start_ms: f64,
     end_ms: f64,
-    text: String,
+    lines: Vec<String>,
 }
 
 impl DetectedSubtitleEntry {
@@ -26,14 +26,14 @@ impl DetectedSubtitleEntry {
             id,
             start_ms: subtitle.start_ms,
             end_ms: subtitle.end_ms,
-            text: subtitle.text(),
+            lines: normalize_lines(&subtitle.lines),
         }
     }
 
     fn update(&mut self, subtitle: TimedSubtitle) {
         self.start_ms = subtitle.start_ms;
         self.end_ms = subtitle.end_ms;
-        self.text = subtitle.text();
+        self.lines = normalize_lines(&subtitle.lines);
     }
 }
 
@@ -77,6 +77,8 @@ pub struct DetectedSubtitlesList {
     scroll_settle_pending: bool,
     scrollbar_animation: Option<ScrollbarAnimation>,
     last_scrollbar_metrics: Option<ScrollbarMetrics>,
+    scrollbar_hovered: bool,
+    scrollbar_last_interaction: Option<Instant>,
 }
 
 impl DetectedSubtitlesList {
@@ -115,6 +117,8 @@ impl DetectedSubtitlesList {
             scroll_settle_pending: false,
             scrollbar_animation: None,
             last_scrollbar_metrics: None,
+            scrollbar_hovered: false,
+            scrollbar_last_interaction: None,
         }
     }
 
@@ -179,11 +183,29 @@ impl DetectedSubtitlesList {
         self.scroll_refresh_pending = true;
     }
 
+    fn remove_subtitle(&mut self, id: u64) {
+        let Some(index) = self.subtitles.iter().position(|entry| entry.id == id) else {
+            return;
+        };
+        self.subtitles.remove(index);
+        if index < self.row_heights.len() {
+            self.row_heights.remove(index);
+        }
+        if index < self.row_measured.len() {
+            self.row_measured.remove(index);
+        }
+        self.rebuild_row_offsets();
+        self.scroll_refresh_pending = true;
+        self.scrollbar_animation = None;
+        self.last_scrollbar_metrics = None;
+    }
+
     fn apply_message(&mut self, message: SubtitleMessage) {
         match message {
             SubtitleMessage::Reset => self.reset_list(),
             SubtitleMessage::New(subtitle) => self.push_subtitle(subtitle),
             SubtitleMessage::Updated(subtitle) => self.update_subtitle(subtitle),
+            SubtitleMessage::Removed(id) => self.remove_subtitle(id),
         }
     }
 
@@ -433,6 +455,7 @@ impl DetectedSubtitlesList {
         let local_y = f32::from(position.y - bounds.origin.y);
         self.scroll_settle_pending = false;
         self.scrollbar_animation = None;
+        self.mark_scrollbar_interaction();
         self.scroll_drag = Some(ScrollbarDragState {
             start_pointer_y: local_y,
             start_scroll_top: metrics.scroll_top,
@@ -462,9 +485,34 @@ impl DetectedSubtitlesList {
 
     fn end_scroll_drag(&mut self, cx: &mut Context<Self>) {
         if self.scroll_drag.take().is_some() {
+            self.mark_scrollbar_interaction();
             self.scroll_settle_pending = true;
             cx.notify();
         }
+    }
+
+    fn mark_scrollbar_interaction(&mut self) {
+        self.scrollbar_last_interaction = Some(Instant::now());
+    }
+
+    fn scrollbar_opacity(&self, now: Instant) -> f32 {
+        if self.scroll_drag.is_some() || self.scrollbar_hovered {
+            return 1.0;
+        }
+        let Some(last) = self.scrollbar_last_interaction else {
+            return 0.0;
+        };
+        let delay = Duration::from_millis(SCROLLBAR_FADE_DELAY_MS);
+        let fade = Duration::from_millis(SCROLLBAR_FADE_MS);
+        let elapsed = now.saturating_duration_since(last);
+        if elapsed <= delay {
+            return 1.0;
+        }
+        if fade.as_secs_f32() <= f32::EPSILON {
+            return 0.0;
+        }
+        let t = ((elapsed - delay).as_secs_f32() / fade.as_secs_f32()).min(1.0);
+        1.0 - ease_out(t)
     }
 
     fn subtitle_row(
@@ -502,6 +550,25 @@ impl DetectedSubtitlesList {
                 );
         }
 
+        let mut line_stack = div().flex().flex_col().gap(px(2.0)).min_w(px(0.0));
+        if entry.lines.is_empty() {
+            line_stack = line_stack.child(
+                div()
+                    .text_size(px(BODY_TEXT_SIZE))
+                    .text_color(text_color)
+                    .child(""),
+            );
+        } else {
+            for line in &entry.lines {
+                line_stack = line_stack.child(
+                    div()
+                        .text_size(px(BODY_TEXT_SIZE))
+                        .text_color(text_color)
+                        .child(line.clone()),
+                );
+            }
+        }
+
         div()
             .id(("detection-subtitles-row", entry.id))
             .flex()
@@ -515,13 +582,7 @@ impl DetectedSubtitlesList {
             .border_b(px(1.0))
             .border_color(divider_color)
             .child(time_row)
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .text_size(px(BODY_TEXT_SIZE))
-                    .text_color(text_color)
-                    .child(entry.text.clone()),
-            )
+            .child(line_stack)
     }
 
     fn empty_placeholder(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -537,9 +598,23 @@ impl DetectedSubtitlesList {
             .child("No subtitles detected yet")
     }
 
-    fn scrollbar_overlay(&self, metrics: ScrollbarMetrics, cx: &mut Context<Self>) -> Option<Div> {
-        let thumb_color = hsla(0.0, 0.0, 1.0, 0.55);
-        let thumb_hover = hsla(0.0, 0.0, 1.0, 0.72);
+    fn scrollbar_overlay(
+        &self,
+        metrics: ScrollbarMetrics,
+        opacity: f32,
+        is_dragging: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        if opacity <= f32::EPSILON {
+            return None;
+        }
+        let thumb_color = hsla(0.0, 0.0, 1.0, 0.28 * opacity);
+        let thumb_hover = hsla(0.0, 0.0, 1.0, 0.55 * opacity);
+        let base_color = if is_dragging {
+            thumb_hover
+        } else {
+            thumb_color
+        };
 
         let track = div()
             .absolute()
@@ -557,7 +632,7 @@ impl DetectedSubtitlesList {
             .right(px(2.0))
             .h(px(metrics.thumb_height))
             .rounded(px(4.0))
-            .bg(thumb_color)
+            .bg(base_color)
             .cursor_default()
             .hover(move |style| style.bg(thumb_hover))
             .on_mouse_down(
@@ -714,6 +789,12 @@ impl Render for DetectedSubtitlesList {
             .track_scroll(&self.scroll_handle)
             .on_scroll_wheel(cx.listener(|this, _event, _window, cx| {
                 this.scroll_refresh_pending = true;
+                this.mark_scrollbar_interaction();
+                cx.notify();
+            }))
+            .on_hover(cx.listener(|this, hovered, _window, cx| {
+                this.scrollbar_hovered = *hovered;
+                this.mark_scrollbar_interaction();
                 cx.notify();
             }))
             .child(list_body);
@@ -733,13 +814,18 @@ impl Render for DetectedSubtitlesList {
             self.scrollbar_metrics()
         };
 
+        let now = Instant::now();
+        let opacity = self.scrollbar_opacity(now);
+
         if let Some(target) = metrics {
             let metrics = if self.scroll_drag.is_some() {
                 target
             } else {
                 self.animated_scrollbar_metrics(target, window)
             };
-            if let Some(scrollbar) = self.scrollbar_overlay(metrics, cx) {
+            if let Some(scrollbar) =
+                self.scrollbar_overlay(metrics, opacity, self.scroll_drag.is_some(), cx)
+            {
                 container = container.child(scrollbar);
             }
             self.last_scrollbar_metrics = Some(metrics);
@@ -747,6 +833,18 @@ impl Render for DetectedSubtitlesList {
             self.scrollbar_animation = None;
             self.scroll_settle_pending = false;
             self.last_scrollbar_metrics = None;
+            self.scrollbar_last_interaction = None;
+        }
+
+        if self.scrollbar_last_interaction.is_some()
+            && !self.scrollbar_hovered
+            && self.scroll_drag.is_none()
+        {
+            if opacity > f32::EPSILON {
+                window.request_animation_frame();
+            } else {
+                self.scrollbar_last_interaction = None;
+            }
         }
 
         if self.scroll_drag.is_some() {
@@ -814,6 +912,8 @@ fn ease_out(t: f32) -> f32 {
 const SCROLLBAR_ANIMATION_MS: u64 = 180;
 const SCROLLBAR_SETTLE_EPS: f32 = 1.0;
 const SCROLLBAR_CANCEL_EPS: f32 = 1.0;
+const SCROLLBAR_FADE_DELAY_MS: u64 = 1000;
+const SCROLLBAR_FADE_MS: u64 = 200;
 const DEFAULT_ESTIMATED_ROW_HEIGHT: f32 = 60.0;
 const ESTIMATED_BODY_LINES: f32 = 2.0;
 const LIST_PADDING_TOP: f32 = 4.0;
@@ -835,6 +935,22 @@ fn seek_target(start_ms: f64) -> Option<Duration> {
     }
     let target_ms = (start_ms + 100.0).max(0.0);
     Some(Duration::from_secs_f64(target_ms / 1000.0))
+}
+
+fn normalize_lines(lines: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for line in lines {
+        for chunk in line.split("\\n") {
+            for part in chunk.split('\n') {
+                let trimmed = part.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                normalized.push(trimmed.to_string());
+            }
+        }
+    }
+    normalized
 }
 
 fn format_timestamp(ms: f64) -> String {

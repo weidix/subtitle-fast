@@ -4,9 +4,11 @@ pub mod confirm_dialog;
 pub mod detection_sidebar;
 pub mod download_window;
 pub mod help_window;
+pub mod inputs;
 pub mod menu_bar;
 pub mod menu_bar_buttons;
 pub mod sidebar;
+pub mod subtitle_editor_window;
 pub mod task_sidebar;
 pub mod titlebar;
 pub mod titlebar_actions;
@@ -17,7 +19,7 @@ pub mod video_roi_overlay;
 pub mod video_toolbar;
 
 pub use color_picker::{ColorPicker, ColorPickerHandle};
-pub use config_editor::{ConfigWindow, bind_text_input_keys};
+pub use config_editor::ConfigWindow;
 pub use confirm_dialog::{
     ConfirmDialog, ConfirmDialogButton, ConfirmDialogButtonStyle, ConfirmDialogConfig,
     ConfirmDialogTitle,
@@ -28,10 +30,12 @@ pub use detection_sidebar::{
 };
 pub use download_window::DownloadWindow;
 pub use help_window::HelpWindow;
+pub use inputs::bind_text_input_keys;
 pub use menu_bar::MenuBar;
 pub use sidebar::{
     CollapseDirection, DragRange, DraggableEdge, Sidebar, SidebarConfig, SidebarHandle,
 };
+pub use subtitle_editor_window::SubtitleEditorWindow;
 pub use task_sidebar::{TaskSidebar, TaskSidebarCallbacks};
 pub use titlebar::Titlebar;
 pub use titlebar_actions::{TitlebarActions, TitlebarActionsCallbacks};

@@ -3,7 +3,8 @@ name: Rust CI
 on:
   pull_request:
     branches:
-      - master
+      - develop
+      - main
     paths:
       - "**/*.rs"
       - Cargo.toml
@@ -16,7 +17,8 @@ on:
       - .github/workflows/**
   push:
     branches:
-      - master
+      - develop
+      - main
     tags:
       - "v*"
     paths:

@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -62,6 +63,19 @@ struct SelectedSnapshot {
     start_seconds: f64,
     end_seconds: f64,
     lines: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct DraftLine {
+    text: String,
+    deleted: bool,
+}
+
+#[derive(Clone, Debug)]
+struct SubtitleDraft {
+    start_text: String,
+    end_text: String,
+    lines: Vec<DraftLine>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -138,6 +152,7 @@ pub struct SubtitleEditorWindow {
     search_query: SharedString,
     selected_id: Option<u64>,
     selected_snapshot: Option<SelectedSnapshot>,
+    drafts: HashMap<u64, SubtitleDraft>,
     dirty: bool,
     suppress_input_observers: bool,
     status: Option<StatusMessage>,
@@ -239,6 +254,7 @@ impl SubtitleEditorWindow {
             search_query: SharedString::from(""),
             selected_id: None,
             selected_snapshot: None,
+            drafts: HashMap::new(),
             dirty: false,
             suppress_input_observers: false,
             status: None,
@@ -349,11 +365,56 @@ impl SubtitleEditorWindow {
         });
     }
 
+    fn select_subtitle(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self.selected_id == Some(id) {
+            return;
+        }
+        self.sync_current_draft_state(self.calculate_dirty(cx), cx);
+        self.load_selected(id, cx);
+    }
+
+    fn sync_current_draft_state(&mut self, is_dirty: bool, cx: &mut Context<Self>) {
+        let Some(id) = self.selected_id else {
+            return;
+        };
+        if is_dirty {
+            let draft = self.collect_draft(cx);
+            self.drafts.insert(id, draft);
+        } else {
+            self.drafts.remove(&id);
+        }
+    }
+
+    fn collect_draft(&self, cx: &mut Context<Self>) -> SubtitleDraft {
+        let start_text = self.start_input.read(cx).text().to_string();
+        let end_text = self.end_input.read(cx).text().to_string();
+        let mut lines = Vec::new();
+        for line in &self.line_inputs {
+            let text = line.input.read(cx).text().to_string();
+            lines.push(DraftLine {
+                text,
+                deleted: line.deleted,
+            });
+        }
+        if lines.is_empty() {
+            lines.push(DraftLine {
+                text: String::new(),
+                deleted: false,
+            });
+        }
+        SubtitleDraft {
+            start_text,
+            end_text,
+            lines,
+        }
+    }
+
     fn refresh_dirty_state(&mut self, cx: &mut Context<Self>) {
         let next = self.calculate_dirty(cx);
         if self.dirty != next {
             self.dirty = next;
         }
+        self.sync_current_draft_state(next, cx);
     }
 
     fn calculate_dirty(&self, cx: &mut Context<Self>) -> bool {
@@ -538,6 +599,32 @@ impl SubtitleEditorWindow {
         self.suppress_input_observers = false;
     }
 
+    fn replace_line_inputs_with_draft(&mut self, lines: Vec<DraftLine>, cx: &mut Context<Self>) {
+        let mut draft_lines = lines;
+        if draft_lines.is_empty() {
+            draft_lines.push(DraftLine {
+                text: String::new(),
+                deleted: false,
+            });
+        }
+
+        self.suppress_input_observers = true;
+        self.line_inputs.clear();
+        self.line_input_subscriptions.clear();
+
+        for line in draft_lines {
+            let mut input_state = Self::build_line_input(cx);
+            input_state.deleted = line.deleted;
+            input_state.input.update(cx, |input: &mut TextInput, cx| {
+                input.set_text(line.text.clone(), cx);
+            });
+            self.line_inputs.push(input_state);
+        }
+
+        self.register_line_observers(cx);
+        self.suppress_input_observers = false;
+    }
+
     fn add_line_input(&mut self, cx: &mut Context<Self>) {
         let input_state = Self::build_line_input(cx);
         self.line_inputs.push(input_state);
@@ -608,6 +695,7 @@ impl SubtitleEditorWindow {
                 self.subtitles.clear();
                 self.selected_id = None;
                 self.dirty = false;
+                self.drafts.clear();
                 self.status = None;
                 self.clear_inputs(cx);
             }
@@ -650,6 +738,7 @@ impl SubtitleEditorWindow {
         let Some(entry_index) = self.subtitles.iter().position(|entry| entry.id == id) else {
             self.selected_id = None;
             self.selected_snapshot = None;
+            self.drafts.remove(&id);
             self.clear_inputs(cx);
             return;
         };
@@ -658,21 +747,38 @@ impl SubtitleEditorWindow {
             let entry = &self.subtitles[entry_index];
             (entry.start_ms, entry.end_ms, entry.lines.clone())
         };
+        let draft = self.drafts.get(&id).cloned();
 
         self.selected_id = Some(id);
         self.dirty = false;
         self.set_selected_snapshot(id, start_ms, end_ms, lines.clone());
         self.suppress_input_observers = true;
-        self.start_input.update(cx, |input: &mut TextInput, cx| {
-            input.set_text(format_seconds_input(start_ms), cx);
-        });
-        self.end_input.update(cx, |input: &mut TextInput, cx| {
-            input.set_text(format_seconds_input(end_ms), cx);
-        });
-        self.replace_line_inputs(lines, cx);
+        if let Some(draft) = draft.clone() {
+            self.start_input.update(cx, |input: &mut TextInput, cx| {
+                input.set_text(draft.start_text.clone(), cx);
+            });
+            self.end_input.update(cx, |input: &mut TextInput, cx| {
+                input.set_text(draft.end_text.clone(), cx);
+            });
+            self.replace_line_inputs_with_draft(draft.lines, cx);
+        } else {
+            self.start_input.update(cx, |input: &mut TextInput, cx| {
+                input.set_text(format_seconds_input(start_ms), cx);
+            });
+            self.end_input.update(cx, |input: &mut TextInput, cx| {
+                input.set_text(format_seconds_input(end_ms), cx);
+            });
+            self.replace_line_inputs(lines, cx);
+        }
         self.suppress_input_observers = false;
         self.status = None;
-        self.seek_preview(start_ms);
+        let preview_start_ms = draft
+            .as_ref()
+            .and_then(|draft| parse_seconds_input(SharedString::from(draft.start_text.clone())))
+            .map(|seconds| normalize_seconds(seconds) * 1000.0)
+            .unwrap_or(start_ms);
+        self.seek_preview(preview_start_ms);
+        self.refresh_dirty_state(cx);
     }
 
     fn seek_preview(&self, start_ms: f64) {
@@ -743,12 +849,135 @@ impl SubtitleEditorWindow {
                 self.update_local_subtitle(id, start_ms, end_ms, lines.clone());
                 self.set_selected_snapshot(id, start_ms, end_ms, lines);
                 self.dirty = false;
+                self.drafts.remove(&id);
                 self.set_status("Subtitle updated.", false, cx);
                 self.seek_preview(start_ms);
             }
             Err(err) => {
                 self.set_status(err, true, cx);
             }
+        }
+    }
+
+    fn collect_lines_from_draft(&self, draft: &SubtitleDraft) -> Vec<String> {
+        let mut raw_lines = Vec::new();
+        for line in &draft.lines {
+            if line.deleted {
+                continue;
+            }
+            let trimmed = line.text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            raw_lines.push(trimmed.to_string());
+        }
+        normalize_lines(&raw_lines)
+    }
+
+    fn build_edit_from_draft(
+        &self,
+        entry: &EditableSubtitle,
+        draft: &SubtitleDraft,
+    ) -> Result<SubtitleEdit, SharedString> {
+        let label = format_timestamp(entry.start_ms);
+        let start_seconds = parse_seconds("Start", SharedString::from(draft.start_text.clone()))
+            .map_err(|err| SharedString::from(format!("Subtitle {label}: {err}")))?;
+        let end_seconds = parse_seconds("End", SharedString::from(draft.end_text.clone()))
+            .map_err(|err| SharedString::from(format!("Subtitle {label}: {err}")))?;
+
+        let start_ms = normalize_seconds(start_seconds) * 1000.0;
+        let end_ms = normalize_seconds(end_seconds) * 1000.0;
+        if end_ms < start_ms {
+            return Err(SharedString::from(format!(
+                "Subtitle {label}: End time must be >= start time."
+            )));
+        }
+
+        let lines = self.collect_lines_from_draft(draft);
+        if lines.is_empty() {
+            return Err(SharedString::from(format!(
+                "Subtitle {label}: Subtitle text cannot be empty."
+            )));
+        }
+
+        Ok(SubtitleEdit {
+            id: entry.id,
+            start_ms,
+            end_ms,
+            lines,
+        })
+    }
+
+    fn apply_all(&mut self, cx: &mut Context<Self>) {
+        let is_dirty = self.calculate_dirty(cx);
+        self.sync_current_draft_state(is_dirty, cx);
+        if self.drafts.is_empty() {
+            return;
+        }
+
+        let mut edits = Vec::new();
+        for entry in &self.subtitles {
+            if let Some(draft) = self.drafts.get(&entry.id) {
+                match self.build_edit_from_draft(entry, draft) {
+                    Ok(edit) => edits.push(edit),
+                    Err(err) => {
+                        self.set_status(err, true, cx);
+                        return;
+                    }
+                }
+            }
+        }
+
+        if edits.is_empty() {
+            return;
+        }
+
+        let mut applied = 0usize;
+        let mut selected_start_ms = None;
+        for edit in edits {
+            match self.detection.update_subtitle(edit.clone()) {
+                Ok(()) => {
+                    self.update_local_subtitle(
+                        edit.id,
+                        edit.start_ms,
+                        edit.end_ms,
+                        edit.lines.clone(),
+                    );
+                    if self.selected_id == Some(edit.id) {
+                        self.set_selected_snapshot(
+                            edit.id,
+                            edit.start_ms,
+                            edit.end_ms,
+                            edit.lines.clone(),
+                        );
+                        self.dirty = false;
+                        selected_start_ms = Some(edit.start_ms);
+                    }
+                    self.drafts.remove(&edit.id);
+                    applied += 1;
+                }
+                Err(err) => {
+                    self.set_status(err, true, cx);
+                    return;
+                }
+            }
+        }
+
+        if let Some(start_ms) = selected_start_ms {
+            self.seek_preview(start_ms);
+        }
+        self.set_status(format!("Saved {applied} subtitle(s)."), false, cx);
+    }
+
+    fn restore_all(&mut self, cx: &mut Context<Self>) {
+        if self.drafts.is_empty() && !self.dirty {
+            return;
+        }
+        self.drafts.clear();
+        if let Some(id) = self.selected_id {
+            self.load_selected(id, cx);
+        } else {
+            self.dirty = false;
         }
     }
 
@@ -799,20 +1028,97 @@ impl SubtitleEditorWindow {
         filtered
     }
 
-    fn header_row(&self, filtered_count: usize) -> impl IntoElement + 'static {
-        let label_color = hsla(0.0, 0.0, 0.8, 1.0);
+    fn header_row(
+        &self,
+        filtered_count: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + 'static {
         let count_color = hsla(0.0, 0.0, 0.6, 1.0);
+        let secondary_bg = hsla(0.0, 0.0, 1.0, 0.08);
+        let secondary_hover = hsla(0.0, 0.0, 1.0, 0.14);
+        let secondary_text = hsla(0.0, 0.0, 0.9, 1.0);
+        let disabled_bg = hsla(0.0, 0.0, 0.2, 1.0);
+        let disabled_text = hsla(0.0, 0.0, 0.6, 1.0);
         let total = self.subtitles.len();
+        let has_pending = self.dirty || !self.drafts.is_empty();
+        let apply_all_icon_color = if has_pending {
+            secondary_text
+        } else {
+            disabled_text
+        };
+        let restore_all_icon_color = if has_pending {
+            secondary_text
+        } else {
+            disabled_text
+        };
+
+        let mut restore_all_button = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(6.0))
+            .h(px(26.0))
+            .px(px(10.0))
+            .rounded(px(6.0))
+            .text_size(px(11.0))
+            .child(icon_sm(Icon::RotateCcw, restore_all_icon_color))
+            .child("Restore All");
+
+        if has_pending {
+            restore_all_button = restore_all_button
+                .bg(secondary_bg)
+                .text_color(secondary_text)
+                .cursor_pointer()
+                .hover(move |style| style.bg(secondary_hover))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _event, _window, cx| {
+                        this.restore_all(cx);
+                    }),
+                );
+        } else {
+            restore_all_button = restore_all_button.bg(disabled_bg).text_color(disabled_text);
+        }
+
+        let mut apply_all_button = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(6.0))
+            .h(px(26.0))
+            .px(px(10.0))
+            .rounded(px(6.0))
+            .text_size(px(11.0))
+            .child(icon_sm(Icon::Check, apply_all_icon_color))
+            .child("Apply All");
+
+        if has_pending {
+            apply_all_button = apply_all_button
+                .bg(secondary_bg)
+                .text_color(secondary_text)
+                .cursor_pointer()
+                .hover(move |style| style.bg(secondary_hover))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _event, _window, cx| {
+                        this.apply_all(cx);
+                    }),
+                );
+        } else {
+            apply_all_button = apply_all_button.bg(disabled_bg).text_color(disabled_text);
+        }
+
+        let actions = div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .child(restore_all_button)
+            .child(apply_all_button);
+
         div()
             .flex()
             .items_center()
             .gap(px(8.0))
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(label_color)
-                    .child("Search"),
-            )
             .child(
                 div()
                     .flex_1()
@@ -825,6 +1131,7 @@ impl SubtitleEditorWindow {
                     .text_color(count_color)
                     .child(format!("{filtered_count} / {total}")),
             )
+            .child(actions)
     }
 
     fn status_row(&self) -> impl IntoElement + 'static {
@@ -857,7 +1164,8 @@ impl SubtitleEditorWindow {
         let dirty_badge_bg = hsla(0.08, 0.75, 0.45, 0.25);
         let dirty_badge_text = hsla(0.08, 0.8, 0.7, 1.0);
         let is_selected = self.selected_id == Some(entry.id);
-        let is_dirty = self.selected_id == Some(entry.id) && self.dirty;
+        let is_dirty = self.drafts.contains_key(&entry.id)
+            || (self.selected_id == Some(entry.id) && self.dirty);
         let id = entry.id;
         let start_ms = entry.start_ms;
         let end_ms = entry.end_ms;
@@ -933,7 +1241,7 @@ impl SubtitleEditorWindow {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _event, _window, cx| {
-                    this.load_selected(id, cx);
+                    this.select_subtitle(id, cx);
                 }),
             )
             .child(time_row)
@@ -2038,6 +2346,7 @@ impl SubtitleEditorWindow {
                     MouseButton::Left,
                     cx.listener(|this, _event, _window, cx| {
                         if let Some(id) = this.selected_id {
+                            this.drafts.remove(&id);
                             this.load_selected(id, cx);
                         }
                     }),
@@ -2061,7 +2370,7 @@ impl Render for SubtitleEditorWindow {
 
         let filtered = self.filtered_subtitles();
         let titlebar = self.titlebar.clone();
-        let header_row = self.header_row(filtered.len());
+        let header_row = self.header_row(filtered.len(), cx);
         let status_row = self.status_row();
         let preview_panel = self.preview_panel();
         let editor_panel = self.editor_panel(cx);

@@ -17,7 +17,7 @@ struct DetectedSubtitleEntry {
     id: u64,
     start_ms: f64,
     end_ms: f64,
-    text: String,
+    lines: Vec<String>,
 }
 
 impl DetectedSubtitleEntry {
@@ -26,14 +26,14 @@ impl DetectedSubtitleEntry {
             id,
             start_ms: subtitle.start_ms,
             end_ms: subtitle.end_ms,
-            text: subtitle.text(),
+            lines: normalize_lines(&subtitle.lines),
         }
     }
 
     fn update(&mut self, subtitle: TimedSubtitle) {
         self.start_ms = subtitle.start_ms;
         self.end_ms = subtitle.end_ms;
-        self.text = subtitle.text();
+        self.lines = normalize_lines(&subtitle.lines);
     }
 }
 
@@ -502,6 +502,25 @@ impl DetectedSubtitlesList {
                 );
         }
 
+        let mut line_stack = div().flex().flex_col().gap(px(2.0)).min_w(px(0.0));
+        if entry.lines.is_empty() {
+            line_stack = line_stack.child(
+                div()
+                    .text_size(px(BODY_TEXT_SIZE))
+                    .text_color(text_color)
+                    .child(""),
+            );
+        } else {
+            for line in &entry.lines {
+                line_stack = line_stack.child(
+                    div()
+                        .text_size(px(BODY_TEXT_SIZE))
+                        .text_color(text_color)
+                        .child(line.clone()),
+                );
+            }
+        }
+
         div()
             .id(("detection-subtitles-row", entry.id))
             .flex()
@@ -515,13 +534,7 @@ impl DetectedSubtitlesList {
             .border_b(px(1.0))
             .border_color(divider_color)
             .child(time_row)
-            .child(
-                div()
-                    .min_w(px(0.0))
-                    .text_size(px(BODY_TEXT_SIZE))
-                    .text_color(text_color)
-                    .child(entry.text.clone()),
-            )
+            .child(line_stack)
     }
 
     fn empty_placeholder(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -835,6 +848,22 @@ fn seek_target(start_ms: f64) -> Option<Duration> {
     }
     let target_ms = (start_ms + 100.0).max(0.0);
     Some(Duration::from_secs_f64(target_ms / 1000.0))
+}
+
+fn normalize_lines(lines: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for line in lines {
+        for chunk in line.split("\\n") {
+            for part in chunk.split('\n') {
+                let trimmed = part.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                normalized.push(trimmed.to_string());
+            }
+        }
+    }
+    normalized
 }
 
 fn format_timestamp(ms: f64) -> String {

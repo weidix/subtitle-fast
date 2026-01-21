@@ -1,6 +1,6 @@
 use gpui::{
-    AnyWindowHandle, App, Context, Global, Menu, MenuItem, SharedString, SystemMenuType, Window,
-    WindowHandle, actions,
+    AnyWindowHandle, App, Context, Global, Menu, MenuItem, NoAction, SharedString, SystemMenuType,
+    Window, WindowHandle, actions,
 };
 
 use crate::gui::app::MainWindow;
@@ -72,6 +72,10 @@ pub(crate) fn main_window_handle(cx: &mut App) -> Option<WindowHandle<MainWindow
     active_main_window(cx)
 }
 
+fn boxed_action(action: impl gpui::Action + 'static) -> Box<dyn gpui::Action> {
+    Box::new(action)
+}
+
 /// Registers handlers for app-wide menu actions.
 pub fn register_actions(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -88,12 +92,6 @@ pub fn register_actions(cx: &mut App) {
         });
     });
 
-    cx.on_action(|_: &OpenSubtitleEditor, cx| {
-        defer_main_window_action(cx, |this, window, cx| {
-            this.open_subtitle_editor_window(window, cx);
-        });
-    });
-
     cx.on_action(|_: &RemoveTask, cx| {
         defer_main_window_action(cx, |this, _window, cx| {
             this.request_remove_active_session(cx);
@@ -104,6 +102,13 @@ pub fn register_actions(cx: &mut App) {
         defer_main_window_action(cx, |this, _window, cx| {
             this.toggle_active_session_state(cx);
         });
+    });
+
+    cx.on_action(|_: &OpenSubtitleEditor, cx| {
+        defer_main_window_action(cx, |this, window, cx| {
+            this.open_subtitle_editor_window(window, cx);
+        });
+        cx.stop_propagation();
     });
 
     cx.on_action(|action: &RemoveSpecificTask, cx| {
@@ -128,16 +133,22 @@ pub fn register_actions(cx: &mut App) {
 }
 
 /// Sets the menu bar for non-macOS platforms.
-pub fn set_app_menus(cx: &mut App, sessions: &[VideoSession]) {
-    cx.set_menus(build_menus(SharedString::from("Menu"), false, sessions));
+pub fn set_app_menus(cx: &mut App, sessions: &[VideoSession], editor_enabled: bool) {
+    cx.set_menus(build_menus(
+        SharedString::from("Menu"),
+        false,
+        sessions,
+        editor_enabled,
+    ));
 }
 
 /// Sets the macOS menu bar using native menus.
-pub fn set_macos_menus(cx: &mut App, sessions: &[VideoSession]) {
+pub fn set_macos_menus(cx: &mut App, sessions: &[VideoSession], editor_enabled: bool) {
     cx.set_menus(build_menus(
         SharedString::from("subtitle-fast"),
         true,
         sessions,
+        editor_enabled,
     ));
 }
 
@@ -145,6 +156,7 @@ fn build_menus(
     app_menu_title: SharedString,
     include_services: bool,
     sessions: &[VideoSession],
+    editor_enabled: bool,
 ) -> Vec<Menu> {
     let mut app_items = vec![MenuItem::action("Settings...", OpenSettings).with_icon("gear")];
     if include_services {
@@ -220,6 +232,12 @@ fn build_menus(
         })
     };
 
+    let subtitle_editor_action: Box<dyn gpui::Action> = if editor_enabled {
+        boxed_action(OpenSubtitleEditor)
+    } else {
+        boxed_action(NoAction)
+    };
+
     vec![
         Menu {
             name: app_menu_title,
@@ -231,7 +249,12 @@ fn build_menus(
             icon: None,
             items: vec![
                 MenuItem::action("Add Task", AddTask).with_icon("plus"),
-                MenuItem::action("Subtitle Editor", OpenSubtitleEditor).with_icon("pencil"),
+                MenuItem::Action {
+                    name: "Subtitle Editor".into(),
+                    icon: Some("pencil".into()),
+                    action: subtitle_editor_action,
+                    os_action: None,
+                },
                 toggle_task_menu,
                 remove_task_menu,
             ],

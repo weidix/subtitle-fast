@@ -80,6 +80,7 @@ struct SubtitleDraft {
     start_text: String,
     end_text: String,
     lines: Vec<DraftLine>,
+    deleted: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -156,6 +157,7 @@ pub struct SubtitleEditorWindow {
     search_query: SharedString,
     selected_id: Option<u64>,
     selected_snapshot: Option<SelectedSnapshot>,
+    selected_deleted: bool,
     drafts: HashMap<u64, SubtitleDraft>,
     dirty: bool,
     suppress_input_observers: bool,
@@ -258,6 +260,7 @@ impl SubtitleEditorWindow {
             search_query: SharedString::from(""),
             selected_id: None,
             selected_snapshot: None,
+            selected_deleted: false,
             drafts: HashMap::new(),
             dirty: false,
             suppress_input_observers: false,
@@ -410,6 +413,7 @@ impl SubtitleEditorWindow {
             start_text,
             end_text,
             lines,
+            deleted: self.selected_deleted,
         }
     }
 
@@ -427,6 +431,10 @@ impl SubtitleEditorWindow {
         };
         if self.selected_id != Some(snapshot.id) {
             return false;
+        }
+
+        if self.selected_deleted {
+            return true;
         }
 
         if self.time_field_modified_for_snapshot(TimeField::Start, snapshot, cx) {
@@ -722,12 +730,93 @@ impl SubtitleEditorWindow {
                     self.load_selected(updated_id, cx);
                 }
             }
+            SubtitleMessage::Removed(id) => {
+                self.remove_local_subtitle(id, cx);
+            }
         }
+    }
+
+    fn toggle_subtitle_deleted(&mut self, cx: &mut Context<Self>) {
+        if self.selected_id.is_none() {
+            self.set_status("Select a subtitle first.", true, cx);
+            return;
+        }
+        self.selected_deleted = !self.selected_deleted;
+        self.refresh_dirty_state(cx);
+        cx.notify();
+    }
+
+    fn remove_local_subtitle(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(index) = self.subtitles.iter().position(|entry| entry.id == id) else {
+            return;
+        };
+        let removed = self.subtitles.remove(index);
+        self.drafts.remove(&id);
+
+        if self.selected_id == Some(id) {
+            self.selected_id = None;
+            self.selected_snapshot = None;
+            self.selected_deleted = false;
+            self.dirty = false;
+            self.clear_inputs(cx);
+            self.select_after_removal(removed.start_ms, cx);
+        }
+    }
+
+    fn select_after_removal(&mut self, removed_start_ms: f64, cx: &mut Context<Self>) {
+        if self.subtitles.is_empty() {
+            return;
+        }
+
+        let mut next_after: Option<&EditableSubtitle> = None;
+        let mut prev_before: Option<&EditableSubtitle> = None;
+
+        for entry in &self.subtitles {
+            if entry.start_ms >= removed_start_ms {
+                let replace = match next_after {
+                    Some(current) => {
+                        entry
+                            .start_ms
+                            .partial_cmp(&current.start_ms)
+                            .unwrap_or(Ordering::Equal)
+                            == Ordering::Less
+                    }
+                    None => true,
+                };
+                if replace {
+                    next_after = Some(entry);
+                }
+            } else {
+                let replace = match prev_before {
+                    Some(current) => {
+                        entry
+                            .start_ms
+                            .partial_cmp(&current.start_ms)
+                            .unwrap_or(Ordering::Equal)
+                            == Ordering::Greater
+                    }
+                    None => true,
+                };
+                if replace {
+                    prev_before = Some(entry);
+                }
+            }
+        }
+
+        if let Some(target) = next_after.or(prev_before) {
+            self.load_selected(target.id, cx);
+        }
+    }
+
+    fn is_marked_deleted(&self, id: u64) -> bool {
+        let draft_deleted = self.drafts.get(&id).is_some_and(|draft| draft.deleted);
+        draft_deleted || (self.selected_id == Some(id) && self.selected_deleted)
     }
 
     fn clear_inputs(&mut self, cx: &mut Context<Self>) {
         self.suppress_input_observers = true;
         self.selected_snapshot = None;
+        self.selected_deleted = false;
         self.start_input.update(cx, |input: &mut TextInput, cx| {
             input.set_text("", cx);
         });
@@ -756,6 +845,7 @@ impl SubtitleEditorWindow {
         self.selected_id = Some(id);
         self.dirty = false;
         self.set_selected_snapshot(id, start_ms, end_ms, lines.clone());
+        self.selected_deleted = draft.as_ref().map(|draft| draft.deleted).unwrap_or(false);
         self.suppress_input_observers = true;
         if let Some(draft) = draft.clone() {
             self.start_input.update(cx, |input: &mut TextInput, cx| {
@@ -812,6 +902,11 @@ impl SubtitleEditorWindow {
             return;
         };
 
+        if self.selected_deleted {
+            self.apply_selected_removal(id, cx);
+            return;
+        }
+
         let start_seconds = match parse_seconds("Start", self.start_input.read(cx).text()) {
             Ok(value) => value,
             Err(err) => {
@@ -856,6 +951,18 @@ impl SubtitleEditorWindow {
                 self.drafts.remove(&id);
                 self.set_status("Subtitle updated.", false, cx);
                 self.seek_preview(start_ms);
+            }
+            Err(err) => {
+                self.set_status(err, true, cx);
+            }
+        }
+    }
+
+    fn apply_selected_removal(&mut self, id: u64, cx: &mut Context<Self>) {
+        match self.detection.remove_subtitle(id) {
+            Ok(()) => {
+                self.remove_local_subtitle(id, cx);
+                self.set_status("Subtitle removed.", false, cx);
             }
             Err(err) => {
                 self.set_status(err, true, cx);
@@ -920,24 +1027,42 @@ impl SubtitleEditorWindow {
         }
 
         let mut edits = Vec::new();
+        let mut removals = Vec::new();
         for entry in &self.subtitles {
             if let Some(draft) = self.drafts.get(&entry.id) {
-                match self.build_edit_from_draft(entry, draft) {
-                    Ok(edit) => edits.push(edit),
-                    Err(err) => {
-                        self.set_status(err, true, cx);
-                        return;
+                if draft.deleted {
+                    removals.push(entry.id);
+                } else {
+                    match self.build_edit_from_draft(entry, draft) {
+                        Ok(edit) => edits.push(edit),
+                        Err(err) => {
+                            self.set_status(err, true, cx);
+                            return;
+                        }
                     }
                 }
             }
         }
 
-        if edits.is_empty() {
+        if edits.is_empty() && removals.is_empty() {
             return;
         }
 
         let mut applied = 0usize;
         let mut selected_start_ms = None;
+        for id in removals {
+            match self.detection.remove_subtitle(id) {
+                Ok(()) => {
+                    self.remove_local_subtitle(id, cx);
+                    applied += 1;
+                }
+                Err(err) => {
+                    self.set_status(err, true, cx);
+                    return;
+                }
+            }
+        }
+
         for edit in edits {
             match self.detection.update_subtitle(edit.clone()) {
                 Ok(()) => {
@@ -970,7 +1095,7 @@ impl SubtitleEditorWindow {
         if let Some(start_ms) = selected_start_ms {
             self.seek_preview(start_ms);
         }
-        self.set_status(format!("Saved {applied} subtitle(s)."), false, cx);
+        self.set_status(format!("Applied {applied} change(s)."), false, cx);
     }
 
     fn restore_all(&mut self, cx: &mut Context<Self>) {
@@ -1159,21 +1284,39 @@ impl SubtitleEditorWindow {
         entry: &EditableSubtitle,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + 'static {
-        let time_color = hsla(0.0, 0.0, 1.0, 0.6);
-        let text_color = hsla(0.0, 0.0, 1.0, 0.9);
+        let base_time_color = hsla(0.0, 0.0, 1.0, 0.6);
+        let base_text_color = hsla(0.0, 0.0, 1.0, 0.9);
+        let deleted_time_color = hsla(0.0, 0.0, 1.0, 0.45);
+        let deleted_text_color = hsla(0.0, 0.0, 1.0, 0.6);
         let hover_bg = hsla(0.0, 0.0, 1.0, 0.05);
         let selected_bg = hsla(0.0, 0.0, 1.0, 0.12);
+        let deleted_bg = hsla(0.0, 0.7, 0.2, 0.18);
+        let deleted_selected_bg = hsla(0.0, 0.7, 0.25, 0.25);
         let border_color = hsla(0.0, 0.0, 1.0, 0.08);
         let dirty_accent = hsla(0.08, 0.85, 0.6, 1.0);
         let dirty_badge_bg = hsla(0.08, 0.75, 0.45, 0.25);
         let dirty_badge_text = hsla(0.08, 0.8, 0.7, 1.0);
+        let deleted_badge_bg = hsla(0.0, 0.7, 0.45, 0.25);
+        let deleted_badge_text = hsla(0.0, 0.7, 0.7, 1.0);
+        let deleted_accent = hsla(0.0, 0.7, 0.65, 1.0);
         let is_selected = self.selected_id == Some(entry.id);
+        let is_deleted = self.is_marked_deleted(entry.id);
         let is_dirty = self.drafts.contains_key(&entry.id)
             || (self.selected_id == Some(entry.id) && self.dirty);
         let id = entry.id;
         let start_ms = entry.start_ms;
         let end_ms = entry.end_ms;
         let lines_snapshot = entry.lines.clone();
+        let time_color = if is_deleted {
+            deleted_time_color
+        } else {
+            base_time_color
+        };
+        let text_color = if is_deleted {
+            deleted_text_color
+        } else {
+            base_text_color
+        };
 
         let mut lines = div()
             .flex()
@@ -1211,7 +1354,22 @@ impl SubtitleEditorWindow {
                 format_timestamp(end_ms)
             ));
 
-        if is_dirty {
+        if is_deleted {
+            time_row = time_row.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .px(px(6.0))
+                    .h(px(LIST_ROW_BADGE_HEIGHT))
+                    .line_height(px(LIST_ROW_BADGE_HEIGHT))
+                    .rounded(px(4.0))
+                    .text_size(px(8.0))
+                    .text_color(deleted_badge_text)
+                    .bg(deleted_badge_bg)
+                    .child("Deleted"),
+            );
+        } else if is_dirty {
             time_row = time_row.child(
                 div()
                     .flex()
@@ -1251,11 +1409,23 @@ impl SubtitleEditorWindow {
             .child(time_row)
             .child(lines);
 
-        if is_selected {
+        if is_deleted {
+            let bg = if is_selected {
+                deleted_selected_bg
+            } else {
+                deleted_bg
+            };
+            row = row.bg(bg);
+        } else if is_selected {
             row = row.bg(selected_bg);
         }
 
-        if is_dirty {
+        if is_dirty || is_deleted {
+            let accent = if is_deleted {
+                deleted_accent
+            } else {
+                dirty_accent
+            };
             row = row.child(
                 div()
                     .absolute()
@@ -1264,7 +1434,7 @@ impl SubtitleEditorWindow {
                     .bottom(px(6.0))
                     .w(px(3.0))
                     .rounded(px(2.0))
-                    .bg(dirty_accent),
+                    .bg(accent),
             );
         }
 
@@ -2314,11 +2484,19 @@ impl SubtitleEditorWindow {
         let secondary_bg = hsla(0.0, 0.0, 1.0, 0.08);
         let secondary_hover = hsla(0.0, 0.0, 1.0, 0.14);
         let secondary_text = hsla(0.0, 0.0, 0.9, 1.0);
+        let delete_bg = hsla(0.0, 0.75, 0.45, 0.28);
+        let delete_hover = hsla(0.0, 0.75, 0.45, 0.4);
+        let delete_active_bg = hsla(0.0, 0.75, 0.45, 0.6);
+        let delete_active_hover = hsla(0.0, 0.75, 0.45, 0.75);
+        let delete_text = hsla(0.0, 0.0, 0.95, 1.0);
+        let hint_color = hsla(0.0, 0.0, 0.55, 1.0);
         let disabled_bg = hsla(0.0, 0.0, 0.2, 1.0);
         let disabled_text = hsla(0.0, 0.0, 0.6, 1.0);
 
         let can_apply = self.selected_id.is_some() && self.dirty;
         let can_restore = self.selected_id.is_some() && self.dirty;
+        let can_remove = self.selected_id.is_some();
+        let remove_active = self.selected_deleted;
         let apply_icon_color = if can_apply {
             primary_text
         } else {
@@ -2389,12 +2567,81 @@ impl SubtitleEditorWindow {
             restore_button = restore_button.bg(disabled_bg).text_color(disabled_text);
         }
 
-        div()
+        let remove_icon_color = if can_remove {
+            delete_text
+        } else {
+            disabled_text
+        };
+        let remove_label = if remove_active {
+            "Undo Remove"
+        } else {
+            "Remove"
+        };
+        let mut remove_button = div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(6.0))
+            .h(px(30.0))
+            .px(px(14.0))
+            .rounded(px(6.0))
+            .text_size(px(12.0))
+            .child(icon_sm(Icon::Trash, remove_icon_color))
+            .child(remove_label);
+
+        if can_remove {
+            let base_bg = if remove_active {
+                delete_active_bg
+            } else {
+                delete_bg
+            };
+            let hover_bg = if remove_active {
+                delete_active_hover
+            } else {
+                delete_hover
+            };
+            remove_button = remove_button
+                .bg(base_bg)
+                .text_color(delete_text)
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover_bg))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _event, _window, cx| {
+                        this.toggle_subtitle_deleted(cx);
+                    }),
+                );
+        } else {
+            remove_button = remove_button.bg(disabled_bg).text_color(disabled_text);
+        }
+
+        let right_actions = div()
             .flex()
             .items_center()
             .gap(px(8.0))
             .child(restore_button)
-            .child(apply_button)
+            .child(apply_button);
+
+        let mut container = div().flex().flex_col().gap(px(6.0)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(remove_button)
+                .child(div().flex_1())
+                .child(right_actions),
+        );
+
+        if can_remove {
+            container = container.child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(hint_color)
+                    .child("Remove marks the subtitle for deletion. Apply to delete."),
+            );
+        }
+
+        container
     }
 }
 

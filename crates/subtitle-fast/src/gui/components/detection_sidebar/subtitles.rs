@@ -183,11 +183,29 @@ impl DetectedSubtitlesList {
         self.scroll_refresh_pending = true;
     }
 
+    fn remove_subtitle(&mut self, id: u64) {
+        let Some(index) = self.subtitles.iter().position(|entry| entry.id == id) else {
+            return;
+        };
+        self.subtitles.remove(index);
+        if index < self.row_heights.len() {
+            self.row_heights.remove(index);
+        }
+        if index < self.row_measured.len() {
+            self.row_measured.remove(index);
+        }
+        self.rebuild_row_offsets();
+        self.scroll_refresh_pending = true;
+        self.scrollbar_animation = None;
+        self.last_scrollbar_metrics = None;
+    }
+
     fn apply_message(&mut self, message: SubtitleMessage) {
         match message {
             SubtitleMessage::Reset => self.reset_list(),
             SubtitleMessage::New(subtitle) => self.push_subtitle(subtitle),
             SubtitleMessage::Updated(subtitle) => self.update_subtitle(subtitle),
+            SubtitleMessage::Removed(id) => self.remove_subtitle(id),
         }
     }
 

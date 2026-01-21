@@ -58,6 +58,7 @@ pub enum SubtitleMessage {
     Reset,
     New(TimedSubtitle),
     Updated(TimedSubtitle),
+    Removed(u64),
 }
 
 /// Editable subtitle fields for the editor window.
@@ -152,6 +153,10 @@ impl DetectionHandle {
 
     pub(crate) fn update_subtitle(&self, edit: SubtitleEdit) -> Result<(), String> {
         self.inner.update_subtitle(edit)
+    }
+
+    pub(crate) fn remove_subtitle(&self, id: u64) -> Result<(), String> {
+        self.inner.remove_subtitle(id)
     }
 
     pub fn export_dialog_seed(&self) -> (PathBuf, Option<String>) {
@@ -479,6 +484,27 @@ impl DetectionPipelineInner {
         };
 
         self.send_subtitle_message(SubtitleMessage::Updated(timed));
+
+        Ok(())
+    }
+
+    fn remove_subtitle(&self, id: u64) -> Result<(), String> {
+        let removed = if let Ok(mut slot) = self.subtitles.lock() {
+            if let Some(index) = slot.iter().position(|subtitle| subtitle.id == id) {
+                slot.remove(index);
+                true
+            } else {
+                false
+            }
+        } else {
+            return Err("Subtitle store unavailable.".to_string());
+        };
+
+        if !removed {
+            return Err("Subtitle not found.".to_string());
+        }
+
+        self.send_subtitle_message(SubtitleMessage::Removed(id));
 
         Ok(())
     }

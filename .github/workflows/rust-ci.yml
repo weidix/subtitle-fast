@@ -40,7 +40,7 @@ concurrency:
 jobs:
   rust:
     name: Build, fmt, clippy, and tests
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     env:
       CARGO_TERM_COLOR: always
       CARGO_TARGET_DIR: target/cargo

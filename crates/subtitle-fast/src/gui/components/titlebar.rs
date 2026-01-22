@@ -11,6 +11,7 @@ const WINDOWS_CAPTION_FONT: &str = "Segoe MDL2 Assets";
 #[cfg(not(target_os = "windows"))]
 const TITLEBAR_MIN_HEIGHT: f32 = 34.0;
 const MAC_TRAFFIC_LIGHT_PADDING: f32 = 72.0;
+const MAC_TITLE_EXTRA_PADDING: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PlatformStyle {
@@ -307,7 +308,12 @@ impl Render for Titlebar {
             }));
 
         let drag_region = if self.platform_style == PlatformStyle::Mac {
-            drag_region.pl(px(MAC_TRAFFIC_LIGHT_PADDING))
+            let leading_padding = if has_title {
+                px(MAC_TRAFFIC_LIGHT_PADDING + MAC_TITLE_EXTRA_PADDING)
+            } else {
+                px(MAC_TRAFFIC_LIGHT_PADDING)
+            };
+            drag_region.pl(leading_padding)
         } else {
             drag_region
         };

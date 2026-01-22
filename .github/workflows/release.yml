@@ -20,7 +20,7 @@ env:
 jobs:
   version-check:
     name: Detect version change
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     outputs:
       should_release: ${{ steps.version.outputs.should_release }}
@@ -66,7 +66,7 @@ jobs:
     strategy:
       matrix:
         os:
-          - ubuntu-20.04
+          - ubuntu-22.04
           - macos-14
           - windows-latest
     env:
@@ -271,7 +271,7 @@ jobs:
     name: Create GitHub release
     needs: [version-check, build]
     if: needs.version-check.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4
         with:

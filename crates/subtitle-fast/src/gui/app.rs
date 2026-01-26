@@ -350,6 +350,34 @@ impl Drop for MenuRefreshListener {
     }
 }
 
+struct VideoMetadataListener {
+    _ui_task: Task<()>,
+    stop_tx: Option<oneshot::Sender<()>>,
+    info_id: usize,
+}
+
+impl VideoMetadataListener {
+    fn new(ui_task: Task<()>, stop_tx: oneshot::Sender<()>, info_id: usize) -> Self {
+        Self {
+            _ui_task: ui_task,
+            stop_tx: Some(stop_tx),
+            info_id,
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+    }
+}
+
+impl Drop for VideoMetadataListener {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 pub struct MainWindow {
     player: Option<Entity<VideoPlayer>>,
     controls: Option<VideoPlayerControlHandle>,
@@ -374,6 +402,7 @@ pub struct MainWindow {
     confirm_dialog: Entity<ConfirmDialog>,
     titlebar_actions: Option<Entity<TitlebarActions>>,
     menu_refresh_listeners: HashMap<SessionId, MenuRefreshListener>,
+    metadata_listener: Option<VideoMetadataListener>,
     config_window: Option<WindowHandle<ConfigWindow>>,
     help_window: Option<WindowHandle<HelpWindow>>,
     subtitle_editor_windows: HashMap<SessionId, WindowHandle<SubtitleEditorWindow>>,
@@ -424,6 +453,7 @@ impl MainWindow {
             confirm_dialog: parts.confirm_dialog,
             titlebar_actions: parts.titlebar_actions,
             menu_refresh_listeners: HashMap::new(),
+            metadata_listener: None,
             config_window: None,
             help_window: None,
             subtitle_editor_windows: HashMap::new(),
@@ -784,6 +814,57 @@ impl MainWindow {
             .insert(session.id, MenuRefreshListener::new(ui_task, stop_tx));
     }
 
+    fn ensure_metadata_listener(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(info) = self.video_info.as_ref() else {
+            self.metadata_listener = None;
+            return;
+        };
+        let info_id = info.id();
+        if self
+            .metadata_listener
+            .as_ref()
+            .is_some_and(|listener| listener.info_id == info_id)
+        {
+            return;
+        }
+
+        self.metadata_listener = None;
+        let mut metadata_rx = info.subscribe_metadata();
+        let entity_id = cx.entity_id();
+        let (notify_tx, mut notify_rx) = unbounded::<()>();
+
+        let ui_task = window.spawn(cx, async move |cx| {
+            while notify_rx.next().await.is_some() {
+                if cx.update(|_window, cx| cx.notify(entity_id)).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let (stop_tx, mut stop_rx) = oneshot::channel();
+        let tokio_task = runtime::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut stop_rx => break,
+                    changed = metadata_rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        if notify_tx.unbounded_send(()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        if tokio_task.is_none() {
+            eprintln!("video metadata listener failed: tokio runtime not initialized");
+        }
+
+        self.metadata_listener = Some(VideoMetadataListener::new(ui_task, stop_tx, info_id));
+    }
+
     fn open_confirm_dialog(&mut self, config: ConfirmDialogConfig, cx: &mut Context<Self>) {
         let dialog = self.confirm_dialog.clone();
         dialog.update(cx, |dialog, cx| {
@@ -1042,6 +1123,7 @@ impl MainWindow {
         self.player = None;
         self.controls = None;
         self.video_info = None;
+        self.metadata_listener = None;
         self.replay_dismissed = false;
         self.set_replay_visible(false, cx);
         self.controls_view.update(cx, |controls_view, cx| {
@@ -1150,6 +1232,7 @@ impl MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_metadata_listener(window, cx);
         let total_height: f32 = window.bounds().size.height.into();
         let video_content = self.player.clone();
         let video_aspect = self.video_aspect();

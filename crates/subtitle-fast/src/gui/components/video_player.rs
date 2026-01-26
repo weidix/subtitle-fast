@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_channel::mpsc::{
@@ -148,17 +148,20 @@ enum PlayerCommand {
 pub struct VideoPlayerInfoHandle {
     inner: Arc<VideoPlayerInfoInner>,
     playback_rx: watch::Receiver<PlaybackState>,
+    metadata_rx: watch::Receiver<VideoMetadata>,
 }
 
 impl VideoPlayerInfoHandle {
     fn new() -> Self {
         let (playback_tx, playback_rx) = watch::channel(PlaybackState::default());
+        let (metadata_tx, metadata_rx) = watch::channel(VideoMetadata::default());
         Self {
             inner: Arc::new(VideoPlayerInfoInner {
-                metadata: Mutex::new(VideoMetadata::default()),
+                metadata_tx,
                 playback_tx,
             }),
             playback_rx,
+            metadata_rx,
         }
     }
 
@@ -176,21 +179,29 @@ impl VideoPlayerInfoHandle {
         }
     }
 
+    pub fn subscribe_metadata(&self) -> watch::Receiver<VideoMetadata> {
+        self.metadata_rx.clone()
+    }
+
+    pub fn id(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+
     fn metadata(&self) -> VideoMetadata {
-        *self
-            .inner
-            .metadata
-            .lock()
-            .expect("video info mutex poisoned")
+        *self.metadata_rx.borrow()
     }
 
     fn set_metadata(&self, metadata: VideoMetadata) {
-        let mut guard = self
+        let _ = self
             .inner
-            .metadata
-            .lock()
-            .expect("video info mutex poisoned");
-        *guard = metadata;
+            .metadata_tx
+            .send_if_modified(|current| {
+                if *current == metadata {
+                    return false;
+                }
+                *current = metadata;
+                true
+            });
     }
 
     fn update_playback(&self, update: impl FnOnce(&mut PlaybackState)) {
@@ -280,7 +291,7 @@ struct PlaybackState {
 }
 
 struct VideoPlayerInfoInner {
-    metadata: Mutex<VideoMetadata>,
+    metadata_tx: watch::Sender<VideoMetadata>,
     playback_tx: watch::Sender<PlaybackState>,
 }
 

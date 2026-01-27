@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
 use futures_channel::mpsc::{
@@ -192,16 +192,13 @@ impl VideoPlayerInfoHandle {
     }
 
     fn set_metadata(&self, metadata: VideoMetadata) {
-        let _ = self
-            .inner
-            .metadata_tx
-            .send_if_modified(|current| {
-                if *current == metadata {
-                    return false;
-                }
-                *current = metadata;
-                true
-            });
+        let _ = self.inner.metadata_tx.send_if_modified(|current| {
+            if *current == metadata {
+                return false;
+            }
+            *current = metadata;
+            true
+        });
     }
 
     fn update_playback(&self, update: impl FnOnce(&mut PlaybackState)) {

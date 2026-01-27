@@ -1741,7 +1741,9 @@ mod tests {
 
     #[test]
     fn test_clipboard() {
-        let platform = build_platform();
+        let Some(platform) = build_platform() else {
+            return;
+        };
         assert_eq!(platform.read_from_clipboard(), None);
 
         let item = ClipboardItem::new_string("1".to_string());
@@ -1775,9 +1777,13 @@ mod tests {
         );
     }
 
-    fn build_platform() -> MacPlatform {
+    fn build_platform() -> Option<MacPlatform> {
         let platform = MacPlatform::new(false);
-        platform.0.lock().pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
-        platform
+        let pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
+        if pasteboard == nil {
+            return None;
+        }
+        platform.0.lock().pasteboard = pasteboard;
+        Some(platform)
     }
 }

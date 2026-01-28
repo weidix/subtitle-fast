@@ -1,7 +1,7 @@
 //! Usage:
 //! cargo run -p subtitle-fast-validator --example dump --features detector-vision -- \
 //!   --yuv-dir ./demo/decoder/yuv --out-dir ./demo/validator \
-//!   --target 235 --delta 12 --detectors integral,projection,vision
+//!   --target 235 --delta 12 --roi 0,0.6,1,0.4 --detectors integral,projection,vision
 
 use std::env;
 use std::error::Error;
@@ -25,6 +25,7 @@ struct Args {
     delta: u8,
     detectors: Vec<SubtitleDetectorKind>,
     presets: Vec<(usize, usize)>,
+    roi: RoiConfig,
 }
 
 enum CliError {
@@ -89,6 +90,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let delta = args.delta;
         let presets = args.presets.clone();
         let out_dir = args.out_dir.clone();
+        let roi = args.roi;
         let label = detector_label(kind);
 
         let bar = progress.add(ProgressBar::new(total_frames as u64));
@@ -133,12 +135,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     uv_plane,
                 )?;
                 let mut config = SubtitleDetectionConfig::for_frame(width, height, width);
-                config.roi = RoiConfig {
-                    x: 0.0,
-                    y: 0.0,
-                    width: 1.0,
-                    height: 1.0,
-                };
+                config.roi = roi;
                 config.luma_band = LumaBandConfig { target, delta };
                 let roi = config.roi;
                 let detector = build_dump_detector(kind, config)?;
@@ -223,6 +220,7 @@ fn parse_args() -> Result<Args, CliError> {
     let mut delta = 12u8;
     let mut detectors = Vec::new();
     let mut presets = Vec::new();
+    let mut roi = full_frame_roi();
     let mut iter = env::args().skip(1);
 
     while let Some(arg) = iter.next() {
@@ -268,6 +266,12 @@ fn parse_args() -> Result<Args, CliError> {
                     .ok_or_else(|| CliError::Message("--detector requires a value".to_string()))?;
                 detectors.push(parse_detector(&value)?);
             }
+            "--roi" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| CliError::Message("--roi requires a value".to_string()))?;
+                roi = normalize_roi(parse_roi(&value)?);
+            }
             "--preset" => {
                 let value = iter
                     .next()
@@ -297,6 +301,7 @@ fn parse_args() -> Result<Args, CliError> {
         delta,
         detectors,
         presets,
+        roi,
     })
 }
 
@@ -304,7 +309,7 @@ fn print_usage() {
     eprintln!("Usage:");
     eprintln!(
         "  dump [--yuv-dir <dir>] [--out-dir <dir>] [--target <u8>] [--delta <u8>]\n\
-       [--detectors <list>] [--detector <name>...] [--preset <WxH>]"
+       [--roi <x,y,w,h>] [--detectors <list>] [--detector <name>...] [--preset <WxH>]"
     );
 }
 
@@ -336,8 +341,71 @@ fn parse_preset(value: &str) -> Result<(usize, usize), CliError> {
     Ok((width, height))
 }
 
+fn parse_roi(value: &str) -> Result<RoiConfig, CliError> {
+    let parts: Vec<_> = value.split([',', ' ']).filter(|s| !s.is_empty()).collect();
+    if parts.len() != 4 {
+        return Err(CliError::Message(
+            "roi must be four numbers: x,y,width,height".to_string(),
+        ));
+    }
+    let parse = |s: &str| {
+        s.parse::<f32>()
+            .map_err(|_| CliError::Message(format!("'{s}' is not a valid number")))
+    };
+    let x = parse(parts[0])?;
+    let y = parse(parts[1])?;
+    let width = parse(parts[2])?;
+    let height = parse(parts[3])?;
+    if x < 0.0 || y < 0.0 {
+        return Err(CliError::Message(
+            "roi coordinates must be non-negative".to_string(),
+        ));
+    }
+    if width < 0.0 || height < 0.0 {
+        return Err(CliError::Message(
+            "roi width and height must be non-negative".to_string(),
+        ));
+    }
+    Ok(RoiConfig {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
 fn default_presets() -> Vec<(usize, usize)> {
     vec![(1920, 1080), (1920, 824)]
+}
+
+fn full_frame_roi() -> RoiConfig {
+    RoiConfig {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    }
+}
+
+fn normalize_roi(roi: RoiConfig) -> RoiConfig {
+    if roi.width == 0.0 || roi.height == 0.0 {
+        return full_frame_roi();
+    }
+    let x = roi.x.clamp(0.0, 1.0);
+    let y = roi.y.clamp(0.0, 1.0);
+    let max_width = (1.0 - x).max(0.0);
+    let max_height = (1.0 - y).max(0.0);
+    let width = roi.width.clamp(0.0, 1.0).min(max_width);
+    let height = roi.height.clamp(0.0, 1.0).min(max_height);
+    if width == 0.0 || height == 0.0 {
+        return full_frame_roi();
+    }
+    RoiConfig {
+        x,
+        y,
+        width,
+        height,
+    }
 }
 
 fn detector_label(kind: SubtitleDetectorKind) -> &'static str {
@@ -378,30 +446,24 @@ fn overlay_regions(image: &mut RgbImage, regions: &[DetectionRegion]) {
 }
 
 fn draw_box(image: &mut RgbImage, region: &DetectionRegion) {
-    let width = image.width() as i32;
-    let height = image.height() as i32;
+    let (left, top, right, bottom) = region_bounds(image, region);
 
-    let left = (region.x * width as f32).round() as i32;
-    let top = (region.y * height as f32).round() as i32;
-    let right = ((region.x + region.width) * width as f32).round() as i32;
-    let bottom = ((region.y + region.height) * height as f32).round() as i32;
+    if left > right || top > bottom {
+        return;
+    }
 
-    for x in left..right {
+    for x in left..=right {
         set_pixel(image, x, top);
         set_pixel(image, x, bottom);
     }
-    for y in top..bottom {
+    for y in top..=bottom {
         set_pixel(image, left, y);
         set_pixel(image, right, y);
     }
 }
 
 fn draw_label(image: &mut RgbImage, region: &DetectionRegion, index: usize) {
-    let width = image.width() as i32;
-    let height = image.height() as i32;
-
-    let left = (region.x * width as f32).round() as i32;
-    let top = (region.y * height as f32).round() as i32;
+    let (left, top, _, _) = region_bounds(image, region);
 
     let text = format!("{index}");
     let label_width = (DIGIT_WIDTH * text.len() as i32 + LABEL_SPACING) * LABEL_SCALE;
@@ -442,6 +504,45 @@ fn set_pixel(image: &mut RgbImage, x: i32, y: i32) {
     if x < image.width() && y < image.height() {
         image.put_pixel(x, y, Rgb([255, 0, 0]));
     }
+}
+
+fn region_bounds(image: &RgbImage, region: &DetectionRegion) -> (i32, i32, i32, i32) {
+    let width = image.width() as i32;
+    let height = image.height() as i32;
+
+    let use_normalized = region.x >= 0.0
+        && region.y >= 0.0
+        && region.width >= 0.0
+        && region.height >= 0.0
+        && region.x <= 1.0
+        && region.y <= 1.0
+        && region.x + region.width <= 1.0
+        && region.y + region.height <= 1.0;
+
+    let (left, top, right, bottom) = if use_normalized {
+        (
+            (region.x * width as f32).round() as i32,
+            (region.y * height as f32).round() as i32,
+            ((region.x + region.width) * width as f32).round() as i32,
+            ((region.y + region.height) * height as f32).round() as i32,
+        )
+    } else {
+        (
+            region.x.round() as i32,
+            region.y.round() as i32,
+            (region.x + region.width).round() as i32,
+            (region.y + region.height).round() as i32,
+        )
+    };
+
+    let max_x = width.saturating_sub(1);
+    let max_y = height.saturating_sub(1);
+    let left = left.clamp(0, max_x);
+    let right = right.clamp(0, max_x);
+    let top = top.clamp(0, max_y);
+    let bottom = bottom.clamp(0, max_y);
+
+    (left, top, right, bottom)
 }
 
 fn build_dump_detector(

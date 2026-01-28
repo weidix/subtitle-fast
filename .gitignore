@@ -11,5 +11,6 @@ demo
 **/.DS_Store
 .venv
 GEMINI.md
+.codex
 
 

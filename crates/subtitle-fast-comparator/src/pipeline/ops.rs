@@ -267,3 +267,125 @@ pub fn dct2(input: &[f32], width: usize, height: usize) -> Vec<f32> {
     }
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 1e-5,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn resize_average_handles_empty_and_downsample() {
+        let empty = resize_average(&[], 0, 0, 2, 3);
+        assert_eq!(empty, vec![0.0; 6]);
+
+        let pixels = vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ];
+        let resized = resize_average(&pixels, 4, 4, 2, 2);
+        assert_eq!(resized.len(), 4);
+        assert_close(resized[0], 3.5);
+        assert_close(resized[1], 5.5);
+        assert_close(resized[2], 11.5);
+        assert_close(resized[3], 13.5);
+    }
+
+    #[test]
+    fn gaussian_blur_returns_empty_for_zero_size_and_preserves_uniform_values() {
+        assert!(gaussian_blur_3x3(&[], 0, 0).is_empty());
+
+        let input = vec![1.0; 9];
+        let output = gaussian_blur_3x3(&input, 3, 3);
+        assert_eq!(output.len(), input.len());
+        for value in output {
+            assert_close(value, 1.0);
+        }
+    }
+
+    #[test]
+    fn sobel_magnitude_clears_output_and_detects_vertical_edge() {
+        let mut output = vec![42.0, 42.0];
+        sobel_magnitude_into(&[], 0, 0, &mut output);
+        assert!(output.is_empty());
+
+        let pixels = vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+        sobel_magnitude_into(&pixels, 3, 3, &mut output);
+        assert_eq!(output.len(), 9);
+        assert_close(output[4], 4.0);
+
+        let standalone = sobel_magnitude(&pixels, 3, 3);
+        assert_eq!(output, standalone);
+    }
+
+    #[test]
+    fn normalize_handles_empty_and_zero_max_and_scales_values() {
+        let mut empty = Vec::<f32>::new();
+        normalize(&mut empty);
+        assert!(empty.is_empty());
+
+        let mut near_zero = vec![0.0, f32::EPSILON / 2.0];
+        normalize(&mut near_zero);
+        assert_eq!(near_zero, vec![0.0, f32::EPSILON / 2.0]);
+
+        let mut values = vec![1.0, 2.0, 4.0];
+        normalize(&mut values);
+        assert_close(values[0], 0.25);
+        assert_close(values[1], 0.5);
+        assert_close(values[2], 1.0);
+    }
+
+    #[test]
+    fn percentile_clamps_bounds_and_supports_copy_variant() {
+        let mut low = vec![4.0, 1.0, 9.0, 2.0];
+        assert_close(percentile_in_place(&mut low, -1.0), 1.0);
+
+        let mut high = vec![4.0, 1.0, 9.0, 2.0];
+        assert_close(percentile_in_place(&mut high, 2.0), 9.0);
+
+        let empty: [f32; 0] = [];
+        assert_close(percentile(&empty, 0.5), 0.0);
+
+        let values = vec![4.0, 1.0, 9.0, 2.0];
+        assert_close(percentile(&values, 0.5), 4.0);
+        assert_eq!(values, vec![4.0, 1.0, 9.0, 2.0]);
+    }
+
+    #[test]
+    fn distance_transform_produces_expected_distances() {
+        let edge_map = vec![0, 0, 0, 0, 1, 0, 0, 0, 0];
+        let distances = distance_transform(&edge_map, 3, 3);
+        let expected = [SQRT_2, 1.0, SQRT_2, 1.0, 0.0, 1.0, SQRT_2, 1.0, SQRT_2];
+        for (actual, expected) in distances.iter().zip(expected) {
+            assert_close(*actual, expected);
+        }
+    }
+
+    #[test]
+    fn binary_morphology_respects_iteration_count() {
+        let center = vec![0, 0, 0, 0, 1, 0, 0, 0, 0];
+        assert_eq!(dilate_binary(&center, 3, 3, 0), center);
+        assert_eq!(dilate_binary(&center, 3, 3, 1), vec![1; 9]);
+
+        assert_eq!(erode_binary(&center, 3, 3, 1), vec![0; 9]);
+        let full = vec![1; 9];
+        assert_eq!(erode_binary(&full, 3, 3, 1), full);
+    }
+
+    #[test]
+    fn dct2_handles_zero_dimensions_and_constant_input() {
+        assert!(dct2(&[], 0, 0).is_empty());
+
+        let input = vec![1.5; 4];
+        let output = dct2(&input, 2, 2);
+        assert_eq!(output.len(), 4);
+        assert_close(output[0], 6.0);
+        assert_close(output[1], 0.0);
+        assert_close(output[2], 0.0);
+        assert_close(output[3], 0.0);
+    }
+}

@@ -762,3 +762,313 @@ fn merge_candidates(a: &Candidate, b: &Candidate, integral: &[u32], width: usize
         score,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_frame(width: usize, height: usize, y_plane: Vec<u8>) -> VideoFrame {
+        let uv_rows = height.div_ceil(2);
+        let uv_plane = vec![128u8; width * uv_rows];
+        VideoFrame::from_nv12_owned(
+            width as u32,
+            height as u32,
+            width,
+            width,
+            None,
+            None,
+            y_plane,
+            uv_plane,
+        )
+        .expect("valid frame")
+    }
+
+    fn find_component(stats: &[ComponentStats], x: usize, y: usize) -> Option<&ComponentStats> {
+        stats.iter().find(|s| s.min_x == x && s.min_y == y)
+    }
+
+    #[test]
+    fn required_len_computes_and_reports_overflow() {
+        let ok = SubtitleDetectionConfig::for_frame(64, 36, 64);
+        assert_eq!(required_len(&ok).expect("required len"), 64 * 36);
+
+        let mut overflow = SubtitleDetectionConfig::for_frame(1, 2, usize::MAX);
+        overflow.frame_height = 2;
+        let err = required_len(&overflow).expect_err("overflow should fail");
+        assert!(matches!(
+            err,
+            SubtitleDetectionError::InsufficientData {
+                data_len: 0,
+                required: usize::MAX
+            }
+        ));
+    }
+
+    #[test]
+    fn compute_roi_rect_clamps_and_rejects_empty() {
+        let roi = compute_roi_rect(
+            100,
+            50,
+            RoiConfig {
+                x: -0.2,
+                y: 0.2,
+                width: 1.3,
+                height: 0.6,
+            },
+        )
+        .expect("roi should be valid");
+        assert_eq!(roi.x, 0);
+        assert_eq!(roi.y, 10);
+        assert_eq!(roi.width, 100);
+        assert_eq!(roi.height, 30);
+
+        let err = match compute_roi_rect(
+            100,
+            50,
+            RoiConfig {
+                x: 0.5,
+                y: 0.5,
+                width: 0.0,
+                height: 0.1,
+            },
+        ) {
+            Ok(_) => panic!("empty roi should fail"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, SubtitleDetectionError::EmptyRoi));
+    }
+
+    #[test]
+    fn threshold_mask_scalar_row_and_scalar_extract_expected_hits() {
+        let src_row = [20u8, 30, 40, 50];
+        let mut dst_row = [0u8; 4];
+        threshold_mask_scalar_row(&src_row, &mut dst_row, 30, 45);
+        assert_eq!(dst_row, [0, 1, 1, 0]);
+
+        let stride = 5usize;
+        let data = vec![
+            0, 0, 0, 0, 0, // row0
+            9, 20, 30, 40, 99, // row1
+            8, 25, 35, 45, 88, // row2
+        ];
+        let roi = RoiRect {
+            x: 1,
+            y: 1,
+            width: 3,
+            height: 2,
+        };
+
+        let mut scalar_mask = vec![0u8; roi.width * roi.height];
+        threshold_mask_scalar(&data, stride, roi, 30, 40, &mut scalar_mask);
+        assert_eq!(scalar_mask, vec![0, 1, 1, 0, 1, 0]);
+
+        let mask = threshold_mask(
+            &data,
+            stride,
+            roi,
+            LumaBandConfig {
+                target: 35,
+                delta: 5,
+            },
+        );
+        assert_eq!(mask, scalar_mask);
+    }
+
+    #[test]
+    fn rlsa_gap_bridges_respect_limits() {
+        let mut horizontal = vec![1, 0, 0, 1, 0, 0, 0, 1];
+        rlsa_horizontal(&mut horizontal, 8, 1, 2);
+        assert_eq!(horizontal, vec![1, 1, 1, 1, 0, 0, 0, 1]);
+
+        let mut vertical = vec![1, 0, 1, 1, 0, 0, 1, 0, 1];
+        rlsa_vertical(&mut vertical, 3, 3, 1);
+        assert_eq!(vertical, vec![1, 0, 1, 1, 0, 1, 1, 0, 1]);
+
+        rlsa_vertical(&mut vertical, 3, 3, 2);
+        assert_eq!(vertical, vec![1, 0, 1, 1, 0, 1, 1, 0, 1]);
+    }
+
+    #[test]
+    fn connected_components_collects_expected_stats() {
+        let mask = vec![
+            0, 1, 1, 0, 0, 0, // y0
+            0, 1, 1, 0, 1, 1, // y1
+            0, 0, 0, 0, 1, 1, // y2
+            1, 0, 0, 0, 0, 0, // y3
+        ];
+        let stats = connected_components(&mask, 6, 4);
+        assert_eq!(stats.len(), 3);
+
+        let top_left = find_component(&stats, 1, 0).expect("top-left component");
+        assert_eq!(top_left.area, 4);
+        assert_eq!(top_left.max_x, 2);
+        assert_eq!(top_left.max_y, 1);
+
+        let right = find_component(&stats, 4, 1).expect("right component");
+        assert_eq!(right.area, 4);
+        assert_eq!(right.max_x, 5);
+        assert_eq!(right.max_y, 2);
+
+        let bottom = find_component(&stats, 0, 3).expect("bottom component");
+        assert_eq!(bottom.area, 1);
+        assert_eq!(bottom.max_x, 0);
+        assert_eq!(bottom.max_y, 3);
+
+        assert!(connected_components(&[], 0, 0).is_empty());
+    }
+
+    #[test]
+    fn integral_rect_sum_and_evaluate_region_return_expected_values() {
+        let mask = vec![
+            1, 1, 0, 0, // y0
+            1, 1, 0, 0, // y1
+            0, 0, 1, 1, // y2
+            0, 0, 1, 1, // y3
+        ];
+        let integral = integral_image(&mask, 4, 4);
+        assert_eq!(rect_sum(&integral, 4, 0, 0, 4, 4), 8);
+        assert_eq!(rect_sum(&integral, 4, 0, 0, 2, 2), 4);
+        assert_eq!(rect_sum(&integral, 4, 2, 0, 4, 2), 0);
+
+        let (fill_no_vmr, vmr_no_vmr, score_no_vmr) = evaluate_region(&integral, 4, 0, 0, 4, 4, 8);
+        assert!((fill_no_vmr - 0.5).abs() < 1e-6);
+        assert!((vmr_no_vmr - 0.0).abs() < 1e-6);
+        assert!((score_no_vmr - 0.5).abs() < 1e-6);
+
+        let (fill, vmr, score) = evaluate_region(&integral, 4, 0, 0, 4, 4, 2);
+        assert!((fill - 0.5).abs() < 1e-6);
+        assert!(vmr > 0.0);
+        assert!(score < fill);
+    }
+
+    #[test]
+    fn candidate_merge_logic_merges_near_regions_on_same_line() {
+        let full_mask = vec![1u8; 80 * 40];
+        let integral = integral_image(&full_mask, 80, 40);
+
+        let a = Candidate {
+            x: 10,
+            y: 10,
+            width: 20,
+            height: 10,
+            _fill: 1.0,
+            _vmr: 0.0,
+            score: 1.0,
+        };
+        let b = Candidate {
+            x: 35,
+            y: 12,
+            width: 15,
+            height: 10,
+            _fill: 1.0,
+            _vmr: 0.0,
+            score: 1.0,
+        };
+        let c = Candidate {
+            x: 12,
+            y: 34,
+            width: 18,
+            height: 10,
+            _fill: 1.0,
+            _vmr: 0.0,
+            score: 1.0,
+        };
+
+        assert!(same_line(&a, &b));
+        assert!(!same_line(&a, &c));
+        assert!(candidate_iou(&a, &b) < IOU_MERGE);
+        assert!(should_merge(&a, &b));
+
+        let merged_ab = merge_candidates(&a, &b, &integral, 80);
+        assert_eq!(merged_ab.x, 10);
+        assert_eq!(merged_ab.y, 10);
+        assert_eq!(merged_ab.width, 40);
+        assert_eq!(merged_ab.height, 12);
+        assert!(merged_ab.score > 0.0);
+
+        let merged = merge_line_candidates(vec![a.clone(), c.clone(), b.clone()], &integral, 80);
+        assert_eq!(merged.len(), 2);
+        assert!(
+            merged
+                .iter()
+                .any(|m| m.x == 10 && m.y == 10 && m.width == 40)
+        );
+        assert!(
+            merged
+                .iter()
+                .any(|m| m.x == 12 && m.y == 34 && m.width == 18)
+        );
+    }
+
+    #[test]
+    fn detector_reports_insufficient_data_for_smaller_input_frame() {
+        let config = SubtitleDetectionConfig {
+            frame_width: 40,
+            frame_height: 30,
+            stride: 40,
+            roi: RoiConfig {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+            },
+            luma_band: LumaBandConfig {
+                target: 230,
+                delta: 10,
+            },
+        };
+        let detector = IntegralBandDetector::new(config).expect("detector");
+
+        let small = make_frame(10, 10, vec![0u8; 10 * 10]);
+        let err = detector
+            .detect(&small)
+            .expect_err("smaller frame should be rejected");
+        assert!(matches!(
+            err,
+            SubtitleDetectionError::InsufficientData {
+                data_len: 100,
+                required: 1200
+            }
+        ));
+    }
+
+    #[test]
+    fn detector_finds_high_contrast_subtitle_band() {
+        let width = 160usize;
+        let height = 90usize;
+        let mut y_plane = vec![20u8; width * height];
+        for y in 56..82 {
+            for x in 30..110 {
+                y_plane[y * width + x] = 230;
+            }
+        }
+
+        let frame = make_frame(width, height, y_plane);
+        let config = SubtitleDetectionConfig {
+            frame_width: width,
+            frame_height: height,
+            stride: width,
+            roi: RoiConfig {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+            },
+            luma_band: LumaBandConfig {
+                target: 230,
+                delta: 5,
+            },
+        };
+        let detector = IntegralBandDetector::new(config).expect("detector");
+        let result = detector.detect(&frame).expect("detection result");
+
+        assert!(result.has_subtitle);
+        assert!(result.max_score > 0.0);
+        assert!(!result.regions.is_empty());
+        let region = &result.regions[0];
+        assert!(region.x <= 30.0);
+        assert!(region.y <= 56.0);
+        assert!(region.width >= 80.0);
+        assert!(region.height >= 24.0);
+    }
+}

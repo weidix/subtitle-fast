@@ -603,6 +603,7 @@ fn resolve_decoder_capacity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn roi_defaults_to_full_when_missing() {
@@ -682,5 +683,52 @@ mod tests {
         };
         let roi = resolve_detection_roi(None, Some(file_roi), true, None).unwrap();
         assert_eq!(roi, full_frame_roi());
+    }
+
+    #[test]
+    fn load_config_override_handles_not_found_parse_and_success() {
+        let missing = PathBuf::from("/tmp/this-path-should-not-exist-subtitle-fast.toml");
+        let err = load_config(Some(&missing)).unwrap_err();
+        assert!(matches!(err, ConfigError::NotFound { .. }));
+
+        let dir = tempdir().unwrap();
+        let invalid = dir.path().join("invalid.toml");
+        std::fs::write(&invalid, "not = [valid").unwrap();
+        let err = load_config(Some(&invalid)).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse { .. }));
+
+        let valid = dir.path().join("ok.toml");
+        std::fs::write(
+            &valid,
+            r#"
+[detection]
+samples_per_second = 11
+target = 220
+delta = 15
+detector = "projection-band"
+comparator = "bitset-cover"
+
+[detection.roi]
+x = 0.1
+y = 0.2
+width = 0.5
+height = 0.3
+
+[decoder]
+backend = "mock"
+channel_capacity = 12
+
+[ocr]
+backend = "noop"
+
+[output]
+path = "out.srt"
+"#,
+        )
+        .unwrap();
+
+        let (config, used_path) = load_config(Some(&valid)).unwrap();
+        assert_eq!(used_path, Some(valid));
+        assert_eq!(config.detection.unwrap().samples_per_second, Some(11));
     }
 }

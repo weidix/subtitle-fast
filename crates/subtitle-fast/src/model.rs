@@ -435,6 +435,17 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn resolve_config_dir_uses_explicit_path_parent_and_validates_root() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let resolved = resolve_config_dir(Some(&config_path)).unwrap();
+        assert_eq!(resolved, dir.path());
+
+        let err = resolve_config_dir(Some(Path::new("/"))).unwrap_err();
+        assert!(matches!(err, ModelPathError::InvalidConfigPath { .. }));
+    }
+
+    #[test]
     fn resolve_ort_paths_use_models_subdir() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
@@ -465,5 +476,54 @@ mod tests {
         assert!(!ort_models_present(&paths));
         std::fs::write(&model_path, [1u8]).unwrap();
         assert!(ort_models_present(&paths));
+    }
+
+    #[cfg(feature = "ocr-ort")]
+    #[test]
+    fn missing_assets_only_returns_absent_or_empty_files() {
+        let dir = tempdir().unwrap();
+        let model_path = dir.path().join("model.onnx");
+        let dict_path = dir.path().join("dict.txt");
+        let paths = OrtModelPaths {
+            model_path: model_path.clone(),
+            dictionary_path: dict_path.clone(),
+        };
+
+        let both_missing = missing_assets(&paths);
+        assert_eq!(both_missing.len(), 2);
+
+        std::fs::write(&model_path, [1u8]).unwrap();
+        let only_dict = missing_assets(&paths);
+        assert_eq!(only_dict.len(), 1);
+        assert_eq!(only_dict[0].label, "OCR dictionary");
+
+        std::fs::write(&dict_path, [7u8]).unwrap();
+        assert!(missing_assets(&paths).is_empty());
+    }
+
+    #[cfg(feature = "ocr-ort")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn download_ort_models_short_circuits_when_assets_are_ready() {
+        let dir = tempdir().unwrap();
+        let model_path = dir.path().join("model.onnx");
+        let dict_path = dir.path().join("dict.txt");
+        std::fs::write(&model_path, [1u8]).unwrap();
+        std::fs::write(&dict_path, [1u8]).unwrap();
+
+        let paths = OrtModelPaths {
+            model_path,
+            dictionary_path: dict_path,
+        };
+
+        let events = Arc::new(std::sync::Mutex::new(Vec::<ModelDownloadEvent>::new()));
+        let events_ref = events.clone();
+        let handler = Arc::new(move |event: ModelDownloadEvent| {
+            events_ref.lock().unwrap().push(event);
+        });
+
+        download_ort_models(&paths, Some(handler))
+            .await
+            .expect("ready assets should skip download");
+        assert!(events.lock().unwrap().is_empty());
     }
 }

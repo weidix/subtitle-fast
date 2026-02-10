@@ -186,17 +186,17 @@ impl SubtitleFastApp {
                     let main_close_for_should_close = main_window.downgrade();
                     window.on_window_should_close(cx, move |_window, cx| {
                         if let Some(main_window) = main_close_for_should_close.upgrade() {
-                            let _ = main_window.update(cx, |this, cx| {
+                            main_window.update(cx, |this, cx| {
                                 this.close_aux_windows(cx);
                             });
                         }
                         true
                     });
                     let main_close_for_titlebar = main_window.downgrade();
-                    let _ = titlebar.update(cx, move |titlebar, cx| {
+                    titlebar.update(cx, move |titlebar, cx| {
                         let close_action = Arc::new(move |window: &mut Window, cx: &mut App| {
                             if let Some(main_window) = main_close_for_titlebar.upgrade() {
-                                let _ = main_window.update(cx, |this, cx| {
+                                main_window.update(cx, |this, cx| {
                                     this.close_aux_windows(cx);
                                 });
                             }

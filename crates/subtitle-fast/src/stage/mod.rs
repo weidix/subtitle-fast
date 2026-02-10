@@ -467,11 +467,11 @@ mod tests {
         let (tx, mut rx) = tokio::sync::watch::channel(false);
         let handle = PipelineHandle { pause_tx: tx };
         handle.set_paused(true);
-        assert_eq!(*rx.borrow_and_update(), true);
+        assert!(*rx.borrow_and_update());
 
         let sender = handle.pause_sender();
         sender.send(false).expect("send pause state");
-        assert_eq!(*rx.borrow_and_update(), false);
+        assert!(!(*rx.borrow_and_update()));
     }
 
     #[test]

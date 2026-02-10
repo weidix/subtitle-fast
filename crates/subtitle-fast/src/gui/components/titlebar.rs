@@ -172,8 +172,10 @@ pub struct Titlebar {
     platform_style: PlatformStyle,
     children: Vec<AnyElement>,
     should_move: bool,
-    on_close: Option<Arc<dyn Fn(&mut Window, &mut App) + 'static>>,
+    on_close: Option<TitlebarCloseAction>,
 }
+
+type TitlebarCloseAction = Arc<dyn Fn(&mut Window, &mut App) + 'static>;
 
 impl Titlebar {
     pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Self {
@@ -196,11 +198,7 @@ impl Titlebar {
 
     /// Sets the close handler for the titlebar close control.
     /// When unset, the window will be closed directly.
-    pub fn set_on_close(
-        &mut self,
-        on_close: Option<Arc<dyn Fn(&mut Window, &mut App) + 'static>>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_on_close(&mut self, on_close: Option<TitlebarCloseAction>, cx: &mut Context<Self>) {
         self.on_close = on_close;
         cx.notify();
     }

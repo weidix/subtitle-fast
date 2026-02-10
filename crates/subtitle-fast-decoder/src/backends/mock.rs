@@ -324,7 +324,7 @@ mod tests {
         })
         .expect("fast frame seek");
         assert_eq!(fast.start_frame, 25);
-        assert!(matches!(fast.drop_until, None));
+        assert!(fast.drop_until.is_none());
 
         let accurate = compute_seek_plan(SeekInfo::Frame {
             frame: 12,
@@ -343,7 +343,7 @@ mod tests {
         })
         .expect("fast time seek");
         assert_eq!(fast.start_frame, (1.5 * MockProvider::FPS).round() as u64);
-        assert!(matches!(fast.drop_until, None));
+        assert!(fast.drop_until.is_none());
 
         let accurate = compute_seek_plan(SeekInfo::Time {
             position: Duration::from_millis(1500),

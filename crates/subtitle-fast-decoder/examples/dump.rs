@@ -1,5 +1,5 @@
 //! Usage:
-//! cargo run -p subtitle-fast-decoder --example dump --features backend-all -- \
+//! cargo run -p subtitle-fast-decoder --example decoder-dump --features backend-all -- \
 //!   --input ./demo/video1_30s.mp4 --backend ffmpeg \
 //!   --yuv-dir ./demo/decoder/yuv --png-dir ./demo/decoder/png --sample-fps 7
 

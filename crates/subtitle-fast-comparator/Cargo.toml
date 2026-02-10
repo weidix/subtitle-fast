@@ -2,6 +2,19 @@
 name = "subtitle-fast-comparator"
 version = "0.1.0"
 edition = "2024"
+autoexamples = false
+
+[[example]]
+name = "comparator-bench"
+path = "examples/bench.rs"
+
+[[example]]
+name = "comparator-dump"
+path = "examples/dump.rs"
+
+[[example]]
+name = "comparator-compare-roi"
+path = "examples/compare_roi.rs"
 
 [dependencies]
 subtitle-fast-types = { path = "../subtitle-fast-types" }

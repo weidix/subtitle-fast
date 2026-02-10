@@ -1,5 +1,5 @@
 //! Usage:
-//! cargo run -p subtitle-fast-ocr --example bench --features engine-all -- \
+//! cargo run -p subtitle-fast-ocr --example ocr-bench --features engine-all -- \
 //!   --input ./demo/rand_cn2.png --iterations 100 --backend ort --backend vision
 
 use std::env;

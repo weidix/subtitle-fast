@@ -3,6 +3,15 @@ name = "subtitle-fast-validator"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
+autoexamples = false
+
+[[example]]
+name = "validator-bench"
+path = "examples/bench.rs"
+
+[[example]]
+name = "validator-dump"
+path = "examples/dump.rs"
 
 [features]
 default = []

@@ -1,5 +1,5 @@
 //! Usage:
-//! cargo run -p subtitle-fast-comparator --example compare_roi -- \
+//! cargo run -p subtitle-fast-comparator --example comparator-compare-roi -- \
 //!   --yuv-a ./demo/decoder/yuv/00010.yuv --yuv-b ./demo/decoder/yuv/00010.yuv \
 //!   --roi-json ./demo/validator/projection/00010.json --comparator sparse-chamfer
 

@@ -3,6 +3,15 @@ name = "subtitle-fast-ocr"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
+autoexamples = false
+
+[[example]]
+name = "ocr-bench"
+path = "examples/bench.rs"
+
+[[example]]
+name = "ocr-dump"
+path = "examples/dump.rs"
 
 [features]
 default = []

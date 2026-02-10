@@ -1,5 +1,5 @@
 //! Usage:
-//! cargo run -p subtitle-fast-comparator --example bench -- \
+//! cargo run -p subtitle-fast-comparator --example comparator-bench -- \
 //!   --yuv-dir ./demo/decoder/yuv --roi-dir ./demo/validator/projection \
 //!   --comparators sparse-chamfer,bitset-cover
 

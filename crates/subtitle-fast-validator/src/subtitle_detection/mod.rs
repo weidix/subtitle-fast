@@ -405,3 +405,64 @@ pub fn available_detector_kinds() -> Vec<SubtitleDetectorKind> {
     }
     available
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn detector_kind_parsing_supports_aliases() {
+        assert_eq!(
+            SubtitleDetectorKind::from_str("integral_band").expect("integral"),
+            SubtitleDetectorKind::IntegralBand
+        );
+        assert_eq!(
+            SubtitleDetectorKind::from_str("projection").expect("projection"),
+            SubtitleDetectorKind::ProjectionBand
+        );
+        assert_eq!(
+            SubtitleDetectorKind::from_str(" AUTO ").expect("auto"),
+            SubtitleDetectorKind::Auto
+        );
+    }
+
+    #[test]
+    fn detector_kind_parsing_rejects_unknown_backend() {
+        let err = SubtitleDetectorKind::from_str("not-a-detector").expect_err("must fail");
+        assert!(matches!(err, SubtitleDetectionError::Unsupported { .. }));
+    }
+
+    #[test]
+    fn subtitle_detection_config_for_frame_sets_full_roi_defaults() {
+        let config = SubtitleDetectionConfig::for_frame(1920, 1080, 2048);
+        assert_eq!(config.frame_width, 1920);
+        assert_eq!(config.frame_height, 1080);
+        assert_eq!(config.stride, 2048);
+        assert_eq!(
+            config.roi,
+            RoiConfig {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0
+            }
+        );
+        assert_eq!(config.luma_band.target, DEFAULT_TARGET);
+        assert_eq!(config.luma_band.delta, DEFAULT_DELTA);
+    }
+
+    #[test]
+    fn preflight_for_builtin_detectors_is_successful() {
+        assert!(preflight_detection(SubtitleDetectorKind::IntegralBand).is_ok());
+        assert!(preflight_detection(SubtitleDetectorKind::ProjectionBand).is_ok());
+        assert!(preflight_detection(SubtitleDetectorKind::Auto).is_ok());
+    }
+
+    #[test]
+    fn available_detector_kinds_include_builtin_cpu_detectors() {
+        let available = available_detector_kinds();
+        assert!(available.contains(&SubtitleDetectorKind::IntegralBand));
+        assert!(available.contains(&SubtitleDetectorKind::ProjectionBand));
+    }
+}

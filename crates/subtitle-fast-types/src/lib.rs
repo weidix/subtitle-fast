@@ -466,3 +466,180 @@ impl OcrResponse {
         Self { texts: Vec::new() }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn sample_nv12_frame() -> VideoFrame {
+        VideoFrame::from_nv12_owned(
+            4,
+            3,
+            4,
+            4,
+            Some(Duration::from_millis(10)),
+            Some(Duration::from_millis(8)),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            vec![10, 11, 12, 13, 14, 15, 16, 17],
+        )
+        .expect("valid nv12 frame")
+    }
+
+    #[test]
+    fn from_nv12_owned_truncates_extra_plane_bytes() {
+        let frame = VideoFrame::from_nv12_owned(4, 3, 4, 4, None, None, vec![1; 16], vec![2; 12])
+            .expect("frame must be created");
+
+        assert_eq!(frame.width(), 4);
+        assert_eq!(frame.height(), 3);
+        assert_eq!(frame.y_plane().len(), 12);
+        assert_eq!(frame.uv_plane().len(), 8);
+        assert_eq!(frame.stride(), 4);
+        assert_eq!(frame.y_stride(), 4);
+        assert_eq!(frame.uv_stride(), 4);
+    }
+
+    #[test]
+    fn from_nv12_owned_rejects_short_planes() {
+        let y_err = VideoFrame::from_nv12_owned(4, 3, 4, 4, None, None, vec![1; 11], vec![2; 8])
+            .expect_err("must reject insufficient y plane");
+        assert!(matches!(y_err, DecoderError::InvalidFrame { .. }));
+        assert!(
+            y_err
+                .to_string()
+                .contains("insufficient NV12 Y plane bytes")
+        );
+
+        let uv_err = VideoFrame::from_nv12_owned(4, 3, 4, 4, None, None, vec![1; 12], vec![2; 7])
+            .expect_err("must reject insufficient uv plane");
+        assert!(matches!(uv_err, DecoderError::InvalidFrame { .. }));
+        assert!(
+            uv_err
+                .to_string()
+                .contains("insufficient NV12 UV plane bytes")
+        );
+    }
+
+    #[test]
+    fn metadata_mutators_update_fields() {
+        let mut frame = sample_nv12_frame()
+            .with_serial(7)
+            .with_index(Some(3))
+            .with_pts(Some(Duration::from_millis(100)))
+            .with_dts(Some(Duration::from_millis(90)));
+
+        assert_eq!(frame.serial(), 7);
+        assert_eq!(frame.index(), Some(3));
+        assert_eq!(frame.pts(), Some(Duration::from_millis(100)));
+        assert_eq!(frame.dts(), Some(Duration::from_millis(90)));
+
+        frame.set_serial(9);
+        frame.set_index(Some(5));
+        frame.set_pts(None);
+        frame.set_dts(None);
+
+        assert_eq!(frame.serial(), 9);
+        assert_eq!(frame.index(), Some(5));
+        assert_eq!(frame.pts(), None);
+        assert_eq!(frame.dts(), None);
+    }
+
+    static RELEASE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn release_counting(ptr: *mut c_void) {
+        RELEASE_COUNT.fetch_add(1, Ordering::SeqCst);
+        if !ptr.is_null() {
+            unsafe {
+                drop(Box::from_raw(ptr as *mut u8));
+            }
+        }
+    }
+
+    #[test]
+    fn native_handle_release_called_once_after_last_drop() {
+        RELEASE_COUNT.store(0, Ordering::SeqCst);
+        let handle = Box::into_raw(Box::new(123_u8)) as *mut c_void;
+        let frame = VideoFrame::from_native_handle(
+            16,
+            9,
+            None,
+            None,
+            Some(42),
+            "mock-native",
+            100,
+            handle,
+            release_counting,
+        )
+        .expect("native frame should be created");
+
+        let clone = frame.clone();
+        assert_eq!(RELEASE_COUNT.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            frame.native().expect("must be native").backend(),
+            "mock-native"
+        );
+        assert_eq!(frame.native().expect("must be native").pixel_format(), 100);
+
+        drop(frame);
+        assert_eq!(RELEASE_COUNT.load(Ordering::SeqCst), 0);
+        drop(clone);
+        assert_eq!(RELEASE_COUNT.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn from_native_handle_rejects_null_pointer() {
+        let err = VideoFrame::from_native_handle(
+            1,
+            1,
+            None,
+            None,
+            None,
+            "noop",
+            0,
+            std::ptr::null_mut(),
+            release_counting,
+        )
+        .expect_err("null handle should fail");
+        assert!(matches!(err, DecoderError::InvalidFrame { .. }));
+        assert!(err.to_string().contains("native handle is null"));
+    }
+
+    #[test]
+    fn decoder_error_helper_constructors_are_stable() {
+        let unsupported = DecoderError::unsupported("ffmpeg");
+        assert!(unsupported.to_string().contains("not supported"));
+
+        let backend = DecoderError::backend_failure("decoder", "crashed");
+        assert!(
+            backend
+                .to_string()
+                .contains("decoder backend failed: crashed")
+        );
+
+        let config = DecoderError::configuration("bad config");
+        assert!(
+            config
+                .to_string()
+                .contains("configuration error: bad config")
+        );
+    }
+
+    #[test]
+    fn subtitle_detection_and_ocr_defaults_are_empty() {
+        let detection = SubtitleDetectionResult::empty();
+        assert!(!detection.has_subtitle);
+        assert_eq!(detection.max_score, 0.0);
+        assert!(detection.regions.is_empty());
+
+        let text = OcrText::new(OcrRegion::new(0.1, 0.2, 0.3, 0.4), "hello".to_string())
+            .with_confidence(0.95);
+        assert_eq!(text.text, "hello");
+        assert_eq!(text.confidence, Some(0.95));
+
+        let response = OcrResponse::new(vec![text]);
+        assert_eq!(response.texts.len(), 1);
+        assert!(OcrResponse::empty().texts.is_empty());
+    }
+}

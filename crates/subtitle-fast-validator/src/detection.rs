@@ -220,3 +220,93 @@ fn log_init_failure(kind: SubtitleDetectorKind, err: &SubtitleDetectionError) {
         kind.as_str()
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use subtitle_fast_types::{DetectionRegion, SubtitleDetectionResult, VideoFrame};
+
+    fn sample_frame(width: u32, height: u32) -> VideoFrame {
+        let stride = width as usize;
+        let y_len = stride * height as usize;
+        let uv_len = stride * (height as usize).div_ceil(2);
+        VideoFrame::from_nv12_owned(
+            width,
+            height,
+            stride,
+            stride,
+            None,
+            None,
+            vec![0; y_len],
+            vec![128; uv_len],
+        )
+        .expect("frame")
+    }
+
+    #[test]
+    fn inflate_regions_expands_and_clamps_to_frame() {
+        let mut result = SubtitleDetectionResult {
+            has_subtitle: true,
+            max_score: 0.8,
+            regions: vec![DetectionRegion {
+                x: 1.0,
+                y: 2.0,
+                width: 4.0,
+                height: 3.0,
+                score: 0.8,
+            }],
+        };
+
+        inflate_regions(&mut result, 10, 8, 5);
+        let region = &result.regions[0];
+        assert_eq!(region.x, 0.0);
+        assert_eq!(region.y, 0.0);
+        assert_eq!(region.width, 10.0);
+        assert_eq!(region.height, 8.0);
+    }
+
+    #[test]
+    fn inflate_regions_noop_on_zero_margin_or_dimensions() {
+        let original = SubtitleDetectionResult {
+            has_subtitle: true,
+            max_score: 1.0,
+            regions: vec![DetectionRegion {
+                x: 2.0,
+                y: 3.0,
+                width: 4.0,
+                height: 5.0,
+                score: 0.7,
+            }],
+        };
+
+        let mut no_margin = original.clone();
+        inflate_regions(&mut no_margin, 100, 100, 0);
+        assert_eq!(no_margin.regions[0].x, original.regions[0].x);
+        assert_eq!(no_margin.regions[0].width, original.regions[0].width);
+
+        let mut zero_width = original.clone();
+        inflate_regions(&mut zero_width, 0, 100, 3);
+        assert_eq!(zero_width.regions[0].x, original.regions[0].x);
+        assert_eq!(zero_width.regions[0].height, original.regions[0].height);
+    }
+
+    #[test]
+    fn duration_millis_saturates_at_u64_max() {
+        let near_max = Duration::from_millis(u64::MAX).saturating_add(Duration::from_secs(1));
+        assert_eq!(duration_millis(near_max), u64::MAX);
+    }
+
+    #[test]
+    fn frame_identifier_prefers_index_then_pts() {
+        let mut frame = sample_frame(4, 4);
+        frame.set_index(Some(8));
+        frame.set_pts(Some(Duration::from_millis(77)));
+        assert_eq!(frame_identifier(&frame), 8);
+
+        frame.set_index(None);
+        assert_eq!(frame_identifier(&frame), 77);
+
+        frame.set_pts(None);
+        assert_eq!(frame_identifier(&frame), 0);
+    }
+}

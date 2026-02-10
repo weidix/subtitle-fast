@@ -1,5 +1,5 @@
 //! Usage:
-//! cargo run -p subtitle-fast-validator --example bench --features detector-vision -- \
+//! cargo run -p subtitle-fast-validator --example validator-bench --features detector-vision -- \
 //!   --yuv-dir ./demo/decoder/yuv --target 235 --delta 12 \
 //!   --detectors integral-band,projection-band,macos-vision
 

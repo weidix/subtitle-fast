@@ -896,4 +896,86 @@ mod tests {
         let rows = mask_to_rows(&mask);
         assert_eq!(rows, vec![vec![1, 0], vec![0, 0], vec![0, 0], vec![1, 0]]);
     }
+
+    #[test]
+    fn packed_mask_fill_range_updates_expected_bits() {
+        let mut mask = PackedMask::new(10, 1);
+        mask.fill_range(0, 2, 9);
+        let row: Vec<usize> = mask.row_iter(0).collect();
+        assert_eq!(row, vec![2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn threshold_pack_row_scalar_sets_bits_for_target_band() {
+        let src = [210u8, 220, 230, 240, 250, 200, 225, 235];
+        let mut dst = [0u8; 1];
+        threshold_pack_row_scalar(&src, &mut dst, 220, 235);
+        let mut mask = PackedMask::new(8, 1);
+        mask.row_mut(0).copy_from_slice(&dst);
+        let hit_indices: Vec<usize> = mask.row_iter(0).collect();
+        assert_eq!(hit_indices, vec![1, 2, 6, 7]);
+    }
+
+    #[test]
+    fn rle_candidates_extract_single_large_component() {
+        let mut mask = PackedMask::new(40, 30);
+        for y in 2..28 {
+            mask.fill_range(y, 4, 36);
+        }
+
+        let candidates = rle_candidates(&mask, 24 * 24);
+        assert_eq!(candidates.len(), 1);
+        let c = &candidates[0];
+        assert_eq!(c.x, 4);
+        assert_eq!(c.y, 2);
+        assert_eq!(c.width, 32);
+        assert_eq!(c.height, 26);
+    }
+
+    #[test]
+    fn analyze_band_splits_far_apart_segments() {
+        let mut mask = PackedMask::new(120, 40);
+        for y in 6..34 {
+            mask.fill_range(y, 8, 38);
+            mask.fill_range(y, 80, 112);
+        }
+
+        let candidates = analyze_band(&mask, 6..34, 24 * 24);
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().any(|c| c.x == 8 && c.width == 30));
+        assert!(candidates.iter().any(|c| c.x == 80 && c.width == 32));
+    }
+
+    #[test]
+    fn compute_roi_rect_clamps_and_detects_empty() {
+        let roi = compute_roi_rect(
+            100,
+            50,
+            RoiConfig {
+                x: -0.2,
+                y: 0.2,
+                width: 1.3,
+                height: 0.6,
+            },
+        )
+        .expect("roi");
+        assert_eq!(roi.x, 0);
+        assert_eq!(roi.y, 10);
+        assert_eq!(roi.width, 100);
+        assert_eq!(roi.height, 30);
+
+        let err = compute_roi_rect(
+            100,
+            50,
+            RoiConfig {
+                x: 0.5,
+                y: 0.5,
+                width: 0.0,
+                height: 0.1,
+            },
+        )
+        .err()
+        .expect("empty roi");
+        assert!(matches!(err, SubtitleDetectionError::EmptyRoi));
+    }
 }

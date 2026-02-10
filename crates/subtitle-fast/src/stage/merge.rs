@@ -247,3 +247,98 @@ fn normalize_text(text: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use subtitle_fast_ocr::{OcrRegion, OcrText};
+
+    fn cue(text: &str, start_ms: u64, end_ms: u64, start_frame: u64) -> SubtitleCue {
+        SubtitleCue {
+            start_time: Duration::from_millis(start_ms),
+            end_time: Duration::from_millis(end_ms),
+            start_frame,
+            text: text.to_string(),
+            center: 0.5,
+        }
+    }
+
+    fn sample_response(lines: &[&str]) -> OcrResponse {
+        OcrResponse::new(
+            lines
+                .iter()
+                .enumerate()
+                .map(|(i, line)| {
+                    OcrText::new(
+                        OcrRegion::new(0.0, i as f32, 10.0, 1.0),
+                        (*line).to_string(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn normalize_text_collapses_spaces_and_empty_lines() {
+        let text = "  hello   world  \n\n foo\tbar ";
+        assert_eq!(normalize_text(text), "hello world\nfoo bar");
+    }
+
+    #[test]
+    fn response_to_text_ignores_blank_entries() {
+        let response = sample_response(&["line1", "   ", "line2"]);
+        assert_eq!(response_to_text(&response), "line1\nline2");
+    }
+
+    #[test]
+    fn should_merge_on_overlap_and_small_gap_with_same_text() {
+        let current = MergedSubtitle {
+            id: 0,
+            start_time: Duration::from_millis(0),
+            end_time: Duration::from_millis(200),
+            start_frame: 0,
+            lines: vec![SubtitleLine {
+                center: 0.5,
+                text: "Hello".to_string(),
+            }],
+        };
+
+        assert!(should_merge(&current, &cue("Other", 150, 260, 10)));
+        assert!(should_merge(&current, &cue("Hello", 260, 330, 15)));
+        assert!(!should_merge(&current, &cue("Different", 260, 330, 15)));
+        assert!(!should_merge(&current, &cue("Hello", 500, 650, 20)));
+    }
+
+    #[test]
+    fn apply_cue_creates_and_updates_subtitle_stats() {
+        let mut worker = MergeWorker::new(Duration::from_secs(2));
+
+        let first = worker
+            .apply_cue(cue("same", 100, 200, 3))
+            .expect("first cue");
+        assert_eq!(first.kind, SubtitleUpdateKind::New);
+        assert_eq!(first.subtitle.id, 0);
+        assert_eq!(worker.stats.cues, 1);
+        assert_eq!(worker.stats.merged, 0);
+
+        let second = worker
+            .apply_cue(cue("same", 250, 320, 2))
+            .expect("second cue");
+        assert_eq!(second.kind, SubtitleUpdateKind::Updated);
+        assert_eq!(second.subtitle.id, 0);
+        assert_eq!(second.subtitle.start_frame, 2);
+        assert_eq!(worker.stats.cues, 1);
+        assert_eq!(worker.stats.merged, 1);
+    }
+
+    #[test]
+    fn prune_discards_expired_cached_subtitles() {
+        let mut worker = MergeWorker::new(Duration::from_millis(200));
+        worker.apply_cue(cue("a", 0, 50, 0)).expect("cue1");
+        worker.apply_cue(cue("b", 80, 120, 1)).expect("cue2");
+
+        worker.prune(Duration::from_millis(500));
+        assert!(worker.subtitles.is_empty());
+    }
+}

@@ -139,3 +139,40 @@ fn build_vision_engine() -> Result<Box<dyn OcrEngine>, OcrError> {
         "vision backend not available on this target",
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn backend_parse_is_case_insensitive_and_trimmed() {
+        assert_eq!(Backend::from_str(" auto ").expect("auto"), Backend::Auto);
+        assert_eq!(Backend::from_str("NOOP").expect("noop"), Backend::Noop);
+    }
+
+    #[test]
+    fn backend_parse_rejects_unknown_value() {
+        let err = Backend::from_str("something-else").expect_err("must fail");
+        assert!(err.to_string().contains("unknown OCR backend"));
+    }
+
+    #[test]
+    fn backend_display_matches_wire_values() {
+        assert_eq!(Backend::Auto.to_string(), "auto");
+        assert_eq!(Backend::Noop.to_string(), "noop");
+    }
+
+    #[test]
+    fn available_backends_always_include_noop() {
+        let backends = Configuration::available_backends();
+        assert!(backends.contains(&Backend::Noop));
+    }
+
+    #[test]
+    fn noop_engine_can_always_be_constructed() {
+        let engine = Backend::Noop.create_engine().expect("noop engine");
+        assert_eq!(engine.name(), "noop");
+        engine.warm_up().expect("noop warmup");
+    }
+}

@@ -38,3 +38,28 @@ impl Default for LumaBandOptions {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subtitle_detection_options_default_targets_projection_detector() {
+        let options = SubtitleDetectionOptions::default();
+        assert!(options.enabled);
+        assert!(options.roi.is_none());
+        assert_eq!(options.detector, SubtitleDetectorKind::ProjectionBand);
+        assert_eq!(options.luma_band.target, DEFAULT_TARGET);
+        assert_eq!(options.luma_band.delta, DEFAULT_DELTA);
+    }
+
+    #[test]
+    fn frame_validator_config_default_enables_detection() {
+        let config = FrameValidatorConfig::default();
+        assert!(config.detection.enabled);
+        assert_eq!(
+            config.detection.detector,
+            SubtitleDetectionOptions::default().detector
+        );
+    }
+}

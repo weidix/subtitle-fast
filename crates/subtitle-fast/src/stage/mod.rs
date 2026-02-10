@@ -351,3 +351,206 @@ fn default_output_path(input: &Path) -> PathBuf {
     path.set_extension("srt");
     path
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::StreamExt;
+    use futures_util::stream;
+    use futures_util::task::noop_waker_ref;
+    use std::num::NonZero;
+    use std::path::Path;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use subtitle_fast_ocr::OcrError;
+    use subtitle_fast_types::RoiConfig;
+    use subtitle_fast_validator::subtitle_detection::SubtitleDetectorKind;
+
+    #[test]
+    fn default_output_path_changes_extension_to_srt() {
+        let path = default_output_path(Path::new("/tmp/demo/video.mp4"));
+        assert_eq!(path, PathBuf::from("/tmp/demo/video.srt"));
+    }
+
+    #[test]
+    fn pipeline_error_mapping_is_configuration_error() {
+        let error = pipeline_error_to_frame(PipelineError::Ocr(OcrStageError::Engine(
+            OcrError::backend("boom"),
+        )));
+        assert!(
+            error
+                .to_string()
+                .contains("configuration error: ocr error: backend error: boom")
+        );
+    }
+
+    #[test]
+    fn pipeline_config_uses_default_output_and_noop_engine_when_requested() {
+        let settings = EffectiveSettings {
+            detection: DetectionSettings {
+                samples_per_second: 5,
+                target: 220,
+                delta: 10,
+                detector: subtitle_fast_validator::subtitle_detection::SubtitleDetectorKind::ProjectionBand,
+                comparator: None,
+                roi: None,
+            },
+            decoder: crate::settings::DecoderSettings::default(),
+            ocr: crate::settings::OcrSettings {
+                backend: Some("noop".to_string()),
+            },
+            output: crate::settings::OutputSettings::default(),
+        };
+
+        let config = PipelineConfig::from_settings(&settings, Path::new("movie.mkv"))
+            .expect("pipeline config");
+        assert_eq!(config.output.path, PathBuf::from("movie.srt"));
+        assert_eq!(config.ocr.engine.name(), "noop");
+
+        let explicit = EffectiveSettings {
+            output: crate::settings::OutputSettings {
+                path: Some(PathBuf::from("custom-output.srt")),
+            },
+            ..settings
+        };
+        let explicit_config = PipelineConfig::from_settings(&explicit, Path::new("movie.mkv"))
+            .expect("pipeline config with explicit output");
+        assert_eq!(
+            explicit_config.output.path,
+            PathBuf::from("custom-output.srt")
+        );
+    }
+
+    #[test]
+    fn build_ocr_engine_falls_back_to_noop_for_unknown_backend() {
+        let settings = EffectiveSettings {
+            detection: DetectionSettings {
+                samples_per_second: 5,
+                target: 220,
+                delta: 10,
+                detector: subtitle_fast_validator::subtitle_detection::SubtitleDetectorKind::ProjectionBand,
+                comparator: None,
+                roi: None,
+            },
+            decoder: crate::settings::DecoderSettings::default(),
+            ocr: crate::settings::OcrSettings {
+                backend: Some("unknown-backend".to_string()),
+            },
+            output: crate::settings::OutputSettings::default(),
+        };
+
+        let engine = build_ocr_engine(&settings);
+        let auto = build_ocr_engine_auto();
+        assert_eq!(engine.name(), auto.name());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pause_stream_respects_pause_state_transitions() {
+        let (tx2, rx2) = tokio::sync::watch::channel(true);
+        let source2 = stream::iter(vec![10u8, 20]);
+        let mut paused2 = PauseStream::new(source2, rx2);
+
+        let waker = noop_waker_ref();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(
+            Pin::new(&mut paused2).poll_next(&mut context),
+            Poll::Pending
+        ));
+
+        tx2.send(false).expect("resume");
+        let next = futures_util::StreamExt::next(&mut paused2).await;
+        assert_eq!(next, Some(10));
+    }
+
+    #[test]
+    fn pipeline_handle_clones_pause_sender() {
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+        let handle = PipelineHandle { pause_tx: tx };
+        handle.set_paused(true);
+        assert_eq!(*rx.borrow_and_update(), true);
+
+        let sender = handle.pause_sender();
+        sender.send(false).expect("send pause state");
+        assert_eq!(*rx.borrow_and_update(), false);
+    }
+
+    #[test]
+    fn stream_bundle_new_preserves_total_frames() {
+        let stream = Box::pin(stream::iter(vec![1u8, 2u8]));
+        let bundle = StreamBundle::new(stream, Some(88));
+        assert_eq!(bundle.total_frames, Some(88));
+    }
+
+    #[test]
+    fn pipeline_progress_defaults_to_zero_values() {
+        let progress = PipelineProgress::default();
+        assert_eq!(progress.samples_seen, 0);
+        assert_eq!(progress.latest_frame_index, 0);
+        assert_eq!(progress.total_frames, None);
+        assert!(!progress.completed);
+        assert!((progress.progress - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn build_pipeline_with_mock_provider_emits_completion_update() {
+        let decoder_config = subtitle_fast_decoder::Configuration {
+            backend: subtitle_fast_decoder::Backend::Mock,
+            input: None,
+            channel_capacity: NonZero::new(8),
+            output_format: subtitle_fast_decoder::OutputFormat::Nv12,
+            start_frame: Some(0),
+        };
+        let provider = Box::new(
+            <subtitle_fast_decoder::backends::mock::MockProvider as subtitle_fast_decoder::DecoderProvider>::new(&decoder_config)
+                .expect("mock provider"),
+        ) as subtitle_fast_decoder::DynDecoderProvider;
+
+        let settings = EffectiveSettings {
+            detection: DetectionSettings {
+                samples_per_second: 12,
+                target: 230,
+                delta: 12,
+                detector: SubtitleDetectorKind::ProjectionBand,
+                comparator: None,
+                roi: Some(RoiConfig {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                }),
+            },
+            decoder: crate::settings::DecoderSettings::default(),
+            ocr: crate::settings::OcrSettings {
+                backend: Some("noop".to_string()),
+            },
+            output: crate::settings::OutputSettings::default(),
+        };
+        let pipeline_config =
+            PipelineConfig::from_settings(&settings, Path::new("demo.mp4")).expect("config");
+        let outputs = build_pipeline(provider, &pipeline_config).expect("build pipeline");
+        assert_eq!(outputs.total_frames, Some(120));
+
+        outputs.handle.set_paused(true);
+        outputs.handle.set_paused(false);
+        outputs
+            .handle
+            .pause_sender()
+            .send(false)
+            .expect("send pause");
+
+        let mut stream = outputs.stream;
+        let mut saw_any = false;
+        let mut saw_completed = false;
+        while let Some(update) = stream.next().await {
+            let update = update.expect("pipeline item");
+            saw_any = true;
+            if update.progress.completed {
+                saw_completed = true;
+                break;
+            }
+        }
+
+        assert!(saw_any);
+        assert!(saw_completed);
+    }
+}

@@ -291,3 +291,126 @@ fn github_ci_active() -> bool {
         .map(|value| !value.is_empty() && value != "false")
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_mutex() -> &'static Mutex<()> {
+        static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_MUTEX.get_or_init(|| Mutex::new(()))
+    }
+
+    fn set_env_var(key: &str, value: &str) {
+        unsafe { std::env::set_var(key, value) }
+    }
+
+    fn remove_env_var(key: &str) {
+        unsafe { std::env::remove_var(key) }
+    }
+
+    #[test]
+    fn output_format_string_representation_is_stable() {
+        assert_eq!(OutputFormat::Nv12.as_str(), "nv12");
+        assert_eq!(OutputFormat::CVPixelBuffer.as_str(), "cvpixelbuffer");
+    }
+
+    #[test]
+    fn backend_parse_accepts_mock_and_rejects_unknown() {
+        assert_eq!(Backend::from_str("mock").expect("mock"), Backend::Mock);
+
+        let err = Backend::from_str("unknown").expect_err("must fail");
+        assert!(err.to_string().contains("unknown backend"));
+    }
+
+    #[test]
+    fn duration_and_frame_count_calculation_follow_expected_rules() {
+        let metadata = crate::core::VideoMetadata::with_duration_and_fps(
+            std::time::Duration::from_secs_f64(2.5),
+            30.0,
+        );
+
+        assert_eq!(metadata.duration_ms(), Some(2500.0));
+        assert_eq!(metadata.calculate_total_frames(), Some(75));
+    }
+
+    #[test]
+    fn total_frames_field_has_priority_over_estimation() {
+        let metadata = crate::core::VideoMetadata {
+            duration: Some(std::time::Duration::from_secs(10)),
+            fps: Some(10.0),
+            width: None,
+            height: None,
+            total_frames: Some(42),
+        };
+
+        assert_eq!(metadata.calculate_total_frames(), Some(42));
+    }
+
+    #[test]
+    fn github_actions_flag_controls_detection() {
+        let _guard = env_mutex().lock().expect("env mutex");
+        set_env_var("GITHUB_ACTIONS", "true");
+        assert!(github_ci_active());
+
+        set_env_var("GITHUB_ACTIONS", "false");
+        assert!(!github_ci_active());
+
+        remove_env_var("GITHUB_ACTIONS");
+        assert!(!github_ci_active());
+    }
+
+    #[test]
+    fn from_env_parses_capacity_and_start_frame() {
+        let _guard = env_mutex().lock().expect("env mutex");
+        set_env_var("SUBFAST_BACKEND", "mock");
+        set_env_var("SUBFAST_CHANNEL_CAPACITY", "6");
+        set_env_var("SUBFAST_START_FRAME", "12");
+
+        let config = Configuration::from_env().expect("config");
+        assert_eq!(config.backend, Backend::Mock);
+        assert_eq!(config.channel_capacity.map(|v| v.get()), Some(6));
+        assert_eq!(config.start_frame, Some(12));
+
+        remove_env_var("SUBFAST_BACKEND");
+        remove_env_var("SUBFAST_CHANNEL_CAPACITY");
+        remove_env_var("SUBFAST_START_FRAME");
+    }
+
+    #[test]
+    fn from_env_rejects_invalid_capacity() {
+        let _guard = env_mutex().lock().expect("env mutex");
+        set_env_var("SUBFAST_CHANNEL_CAPACITY", "0");
+        let err = Configuration::from_env().expect_err("must fail");
+        assert!(
+            err.to_string()
+                .contains("SUBFAST_CHANNEL_CAPACITY must be greater than zero")
+        );
+        remove_env_var("SUBFAST_CHANNEL_CAPACITY");
+    }
+
+    #[test]
+    fn create_provider_rejects_mock_outside_github_actions() {
+        let _guard = env_mutex().lock().expect("env mutex");
+        remove_env_var("GITHUB_ACTIONS");
+        let config = Configuration {
+            backend: Backend::Mock,
+            ..Configuration::default()
+        };
+        let err = config.create_provider().err().expect("must reject mock");
+        assert!(err.to_string().contains("not supported"));
+    }
+
+    #[test]
+    fn create_provider_accepts_mock_in_github_actions_mode() {
+        let _guard = env_mutex().lock().expect("env mutex");
+        set_env_var("GITHUB_ACTIONS", "true");
+        let config = Configuration {
+            backend: Backend::Mock,
+            ..Configuration::default()
+        };
+        assert!(config.create_provider().is_ok());
+        remove_env_var("GITHUB_ACTIONS");
+    }
+}

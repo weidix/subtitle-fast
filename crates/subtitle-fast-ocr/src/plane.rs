@@ -83,3 +83,37 @@ impl Deref for LumaPlane<'_> {
         self.data
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use subtitle_fast_types::VideoFrame;
+
+    #[test]
+    fn from_parts_clips_to_stride_times_height() {
+        let data = vec![1u8; 20];
+        let plane = LumaPlane::from_parts(4, 3, 5, &data).expect("plane");
+        assert_eq!(plane.width(), 4);
+        assert_eq!(plane.height(), 3);
+        assert_eq!(plane.stride(), 5);
+        assert_eq!(plane.data().len(), 15);
+    }
+
+    #[test]
+    fn from_parts_rejects_insufficient_data() {
+        let data = vec![1u8; 14];
+        let err = LumaPlane::from_parts(4, 3, 5, &data).expect_err("must fail");
+        assert!(matches!(err, OcrError::InsufficientPlaneData { .. }));
+    }
+
+    #[test]
+    fn from_frame_matches_video_frame_shape() {
+        let frame = VideoFrame::from_nv12_owned(4, 3, 4, 4, None, None, vec![0; 12], vec![128; 8])
+            .expect("frame");
+        let plane = LumaPlane::from_frame(&frame);
+        assert_eq!(plane.width(), 4);
+        assert_eq!(plane.height(), 3);
+        assert_eq!(plane.stride(), 4);
+        assert_eq!(plane.deref().len(), 12);
+    }
+}

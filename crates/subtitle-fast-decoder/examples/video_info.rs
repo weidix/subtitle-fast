@@ -1,5 +1,5 @@
 //! Usage:
-//! cargo run -p subtitle-fast-decoder --example video_info --features backend-all -- \
+//! cargo run -p subtitle-fast-decoder --example decoder-video-info --features backend-all -- \
 //!   --input ./demo/video1_30s.mp4 --backend ffmpeg
 
 use std::env;

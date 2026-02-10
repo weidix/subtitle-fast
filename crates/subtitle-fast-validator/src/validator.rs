@@ -70,3 +70,58 @@ impl ProcessingOperations {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{FrameValidatorConfig, SubtitleDetectionOptions};
+    use subtitle_fast_types::VideoFrame;
+
+    fn sample_frame() -> VideoFrame {
+        VideoFrame::from_nv12_owned(8, 8, 8, 8, None, None, vec![0; 64], vec![128; 32])
+            .expect("frame")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn disabled_detection_returns_empty_result() {
+        let options = SubtitleDetectionOptions {
+            enabled: false,
+            ..SubtitleDetectionOptions::default()
+        };
+        let validator =
+            FrameValidator::new(FrameValidatorConfig { detection: options }).expect("validator");
+
+        let result = validator
+            .process_frame(sample_frame())
+            .await
+            .expect("result");
+        assert!(!result.has_subtitle);
+        assert!(result.regions.is_empty());
+        validator.finalize().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn processing_operations_without_pipeline_is_empty() {
+        let options = SubtitleDetectionOptions {
+            enabled: false,
+            ..SubtitleDetectionOptions::default()
+        };
+        let operations = ProcessingOperations::new(FrameValidatorConfig { detection: options });
+
+        let result = operations
+            .process_frame(
+                sample_frame(),
+                Some(RoiConfig {
+                    x: 0.1,
+                    y: 0.1,
+                    width: 0.8,
+                    height: 0.8,
+                }),
+            )
+            .await
+            .expect("result");
+        assert!(!result.has_subtitle);
+        assert_eq!(result.max_score, 0.0);
+        operations.finalize().await;
+    }
+}

@@ -3,6 +3,19 @@ name = "subtitle-fast-decoder"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
+autoexamples = false
+
+[[example]]
+name = "decoder-bench"
+path = "examples/bench.rs"
+
+[[example]]
+name = "decoder-dump"
+path = "examples/dump.rs"
+
+[[example]]
+name = "decoder-video-info"
+path = "examples/video_info.rs"
 
 [features]
 default = []

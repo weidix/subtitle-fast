@@ -1,5 +1,5 @@
 //! Usage:
-//! cargo run -p subtitle-fast-validator --example dump --features detector-vision -- \
+//! cargo run -p subtitle-fast-validator --example validator-dump --features detector-vision -- \
 //!   --yuv-dir ./demo/decoder/yuv --out-dir ./demo/validator \
 //!   --target 235 --delta 12 --roi 0,0.6,1,0.4 --detectors integral,projection,vision
 

@@ -216,6 +216,8 @@ fn compute_seek_plan(info: SeekInfo) -> Option<SeekPlan> {
 mod tests {
     use super::*;
     use crate::DynDecoderProvider;
+    use std::sync::atomic::AtomicU64;
+    use tokio::sync::watch;
     use tokio_stream::StreamExt;
 
     #[tokio::test(flavor = "multi_thread")]
@@ -312,5 +314,96 @@ mod tests {
         let frame = sought.expect("expected frame after seek");
         assert!(frame.index().unwrap_or(0) >= 60);
         assert!(frame.pts().unwrap_or_default() >= Duration::from_secs(1));
+    }
+
+    #[test]
+    fn compute_seek_plan_handles_frame_modes() {
+        let fast = compute_seek_plan(SeekInfo::Frame {
+            frame: 25,
+            mode: SeekMode::Fast,
+        })
+        .expect("fast frame seek");
+        assert_eq!(fast.start_frame, 25);
+        assert!(matches!(fast.drop_until, None));
+
+        let accurate = compute_seek_plan(SeekInfo::Frame {
+            frame: 12,
+            mode: SeekMode::Accurate,
+        })
+        .expect("accurate frame seek");
+        assert_eq!(accurate.start_frame, 12);
+        assert!(matches!(accurate.drop_until, Some(DropUntil::Frame(12))));
+    }
+
+    #[test]
+    fn compute_seek_plan_handles_time_modes() {
+        let fast = compute_seek_plan(SeekInfo::Time {
+            position: Duration::from_millis(1500),
+            mode: SeekMode::Fast,
+        })
+        .expect("fast time seek");
+        assert_eq!(fast.start_frame, (1.5 * MockProvider::FPS).round() as u64);
+        assert!(matches!(fast.drop_until, None));
+
+        let accurate = compute_seek_plan(SeekInfo::Time {
+            position: Duration::from_millis(1500),
+            mode: SeekMode::Accurate,
+        })
+        .expect("accurate time seek");
+        assert_eq!(
+            accurate.start_frame,
+            (1.5 * MockProvider::FPS).floor() as u64
+        );
+        match accurate.drop_until {
+            Some(DropUntil::Timestamp(ts)) => assert_eq!(ts, Duration::from_millis(1500)),
+            _ => panic!("expected timestamp drop-until"),
+        }
+    }
+
+    #[test]
+    fn should_skip_frame_respects_drop_until_rules() {
+        let mut pending = Some(DropUntil::Frame(3));
+        assert!(should_skip_frame(
+            &mut pending,
+            2,
+            Some(Duration::from_millis(10))
+        ));
+        assert!(!should_skip_frame(
+            &mut pending,
+            3,
+            Some(Duration::from_millis(10))
+        ));
+        assert!(pending.is_none());
+
+        let mut pending = Some(DropUntil::Timestamp(Duration::from_millis(40)));
+        assert!(should_skip_frame(
+            &mut pending,
+            0,
+            Some(Duration::from_millis(20))
+        ));
+        assert!(!should_skip_frame(
+            &mut pending,
+            0,
+            Some(Duration::from_millis(40))
+        ));
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn drain_seek_requests_updates_serial_and_returns_plan() {
+        let (tx, mut rx) = watch::channel(None);
+        tx.send(Some(SeekInfo::Frame {
+            frame: 7,
+            mode: SeekMode::Fast,
+        }))
+        .expect("send seek info");
+
+        let serial = AtomicU64::new(9);
+        let mut current_serial = 0;
+        let plan =
+            drain_seek_requests(&mut rx, &serial, &mut current_serial).expect("seek plan expected");
+
+        assert_eq!(plan.start_frame, 7);
+        assert_eq!(current_serial, 9);
     }
 }

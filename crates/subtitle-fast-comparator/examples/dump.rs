@@ -1,5 +1,5 @@
 //! Usage:
-//! cargo run -p subtitle-fast-comparator --example dump -- \
+//! cargo run -p subtitle-fast-comparator --example comparator-dump -- \
 //!   --yuv-dir ./demo/decoder/yuv --roi-dir ./demo/validator/projection \
 //!   --output-dir ./demo/comparator --dump-file ./demo/comparator/comparator_dump.json \
 //!   --max-frames 100 --comparator sparse-chamfer
